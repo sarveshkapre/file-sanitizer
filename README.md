@@ -7,6 +7,7 @@ Local file sanitizer that removes common metadata from images and PDFs.
 - Strip EXIF from images.
 - Remove PDF metadata.
 - JSONL report output.
+- Preserve directory structure by default (avoids filename collisions).
 
 ## Quickstart
 
@@ -18,5 +19,18 @@ make check
 ## Usage
 
 ```bash
-python -m file_sanitizer sanitize --input ./files --out ./sanitized --report sanitize-report.jsonl
+file-sanitizer sanitize --input ./files --out ./sanitized
+```
+
+Optional flags:
+
+```bash
+# Skip unknown file types instead of copying them as-is
+file-sanitizer sanitize --input ./files --out ./sanitized --no-copy-unsupported
+
+# Flatten outputs into a single directory (may rename to avoid collisions)
+file-sanitizer sanitize --input ./files --out ./sanitized --flat
+
+# Preview the report without writing outputs
+file-sanitizer sanitize --input ./files --out ./sanitized --dry-run
 ```
