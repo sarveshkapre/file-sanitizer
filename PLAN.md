@@ -11,10 +11,10 @@ One-line pitch: A fast, local CLI to sanitize files by stripping common metadata
 - PDF risk scanning warnings (OpenAction/actions/forms/attachments) included in the report.
 - CLI flags for safer runs: `--flat`, `--[no-]overwrite`, `--[no-]copy-unsupported`, `--dry-run`.
 - Summary stats printed to stderr (counts by action).
+- Optional report summary record appended to JSONL via `--report-summary`.
 
 ## Next
 
-- Add optional report summary record (single JSON line with counts).
 - Add a small golden test corpus under `tests/fixtures/` (EXIF’d JPEG, metadata’d PDF).
 
 ## Top Risks / Unknowns

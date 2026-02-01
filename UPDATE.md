@@ -7,6 +7,7 @@
 - PDF risk scanning adds report warnings for common active-content indicators (OpenAction/actions/forms/attachments).
 - CLI adds safer knobs: `--flat`, `--[no-]overwrite`, `--[no-]copy-unsupported`, `--dry-run`.
 - CLI prints a per-run summary to stderr (counts by action).
+- Optional report summary record appended to JSONL via `--report-summary`.
 
 ## Notes
 

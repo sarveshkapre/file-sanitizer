@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import argparse
+import json
 import sys
 from collections import Counter
 from pathlib import Path
@@ -44,6 +45,11 @@ def main(argv: list[str] | None = None) -> int:
         action="store_true",
         help="Compute outputs and report without writing any files",
     )
+    p_run.add_argument(
+        "--report-summary",
+        action="store_true",
+        help="Append a final JSONL summary record to the report",
+    )
     p_run.set_defaults(func=_run)
 
     args = parser.parse_args(argv)
@@ -76,6 +82,17 @@ def _run(args: argparse.Namespace) -> int:
     print(f"files: {total}", file=sys.stderr)
     for action, n in sorted(counts.items()):
         print(f"  {action}: {n}", file=sys.stderr)
+
+    if args.report_summary:
+        summary = {
+            "type": "summary",
+            "dry_run": bool(args.dry_run),
+            "exit_code": int(rc),
+            "files": int(total),
+            "counts": dict(sorted(counts.items())),
+        }
+        with report.open("a", encoding="utf-8") as fh:
+            fh.write(json.dumps(summary) + "\n")
     return rc
 
 

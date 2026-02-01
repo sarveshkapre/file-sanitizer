@@ -33,4 +33,7 @@ file-sanitizer sanitize --input ./files --out ./sanitized --flat
 
 # Preview the report without writing outputs
 file-sanitizer sanitize --input ./files --out ./sanitized --dry-run
+
+# Append a summary record to the report JSONL (useful for ingestion)
+file-sanitizer sanitize --input ./files --out ./sanitized --report-summary
 ```
