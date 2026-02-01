@@ -9,6 +9,7 @@
 - CLI prints a per-run summary to stderr (counts by action).
 - Optional report summary record appended to JSONL via `--report-summary`.
 - Optional strict mode for CI: `--fail-on-warnings` exits non-zero if any warnings are present.
+- `--dry-run` avoids creating output directories unless required for the report path.
 
 ## Notes
 

@@ -31,7 +31,7 @@ file-sanitizer sanitize --input ./files --out ./sanitized --no-copy-unsupported
 # Flatten outputs into a single directory (may rename to avoid collisions)
 file-sanitizer sanitize --input ./files --out ./sanitized --flat
 
-# Preview the report without writing outputs
+# Preview sanitized outputs (report only; no sanitized files written)
 file-sanitizer sanitize --input ./files --out ./sanitized --dry-run
 
 # Append a summary record to the report JSONL (useful for ingestion)

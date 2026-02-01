@@ -130,3 +130,19 @@ def test_dry_run_does_not_write_outputs(tmp_path: Path) -> None:
 
     report_text = report.read_text(encoding="utf-8")
     assert "would_image_sanitize" in report_text
+
+
+def test_dry_run_does_not_create_out_dir_when_report_elsewhere(tmp_path: Path) -> None:
+    img_path = tmp_path / "test.jpg"
+    Image.new("RGB", (10, 10), color="red").save(img_path)
+
+    out_dir = tmp_path / "out"
+    report = tmp_path / "report.jsonl"
+    rc = sanitize_path(
+        img_path,
+        out_dir,
+        report,
+        options=SanitizeOptions(dry_run=True),
+    )
+    assert rc == 0
+    assert not out_dir.exists()

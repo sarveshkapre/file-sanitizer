@@ -13,6 +13,7 @@ One-line pitch: A fast, local CLI to sanitize files by stripping common metadata
 - Summary stats printed to stderr (counts by action).
 - Optional report summary record appended to JSONL via `--report-summary`.
 - CI-friendly strict mode: `--fail-on-warnings`.
+- `--dry-run` avoids creating output directories unless required for the report path.
 
 ## Next
 

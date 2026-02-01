@@ -55,15 +55,14 @@ def sanitize_path(
 ) -> int:
     opts = options or SanitizeOptions()
 
-    out_dir.mkdir(parents=True, exist_ok=True)
     report_path.parent.mkdir(parents=True, exist_ok=True)
 
     error_count = 0
 
     input_root = input_path if input_path.is_dir() else input_path.parent
-    input_root_resolved = input_root.resolve()
-    out_dir_resolved = out_dir.resolve()
-    report_path_resolved = report_path.resolve()
+    input_root_resolved = input_root.resolve(strict=False)
+    out_dir_resolved = out_dir.resolve(strict=False)
+    report_path_resolved = report_path.resolve(strict=False)
 
     with report_path.open("w", encoding="utf-8") as out:
         for file in _iter_files(input_path):
@@ -150,7 +149,8 @@ def _compute_output_path(*, file: Path, input_root: Path, out_dir: Path, flat_ou
 
 
 def _sanitize_file(input_path: Path, output_path: Path, *, options: SanitizeOptions) -> ReportItem:
-    output_path.parent.mkdir(parents=True, exist_ok=True)
+    if not options.dry_run:
+        output_path.parent.mkdir(parents=True, exist_ok=True)
 
     if output_path.exists() and not options.overwrite:
         return ReportItem(

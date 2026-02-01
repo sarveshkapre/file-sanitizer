@@ -43,7 +43,7 @@ def main(argv: list[str] | None = None) -> int:
     p_run.add_argument(
         "--dry-run",
         action="store_true",
-        help="Compute outputs and report without writing any files",
+        help="Compute outputs and write the report without writing sanitized outputs",
     )
     p_run.add_argument(
         "--report-summary",
