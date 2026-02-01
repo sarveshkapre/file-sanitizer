@@ -58,6 +58,7 @@ def sanitize_path(
     report_path.parent.mkdir(parents=True, exist_ok=True)
 
     error_count = 0
+    reserved_outputs: set[Path] = set()
 
     input_root = input_path if input_path.is_dir() else input_path.parent
     input_root_resolved = input_root.resolve(strict=False)
@@ -73,6 +74,7 @@ def sanitize_path(
                 out_dir=out_dir,
                 out_dir_resolved=out_dir_resolved,
                 report_path_resolved=report_path_resolved,
+                reserved_outputs=reserved_outputs,
                 options=opts,
             )
             if item is None:
@@ -103,6 +105,7 @@ def _sanitize_one(
     out_dir: Path,
     out_dir_resolved: Path,
     report_path_resolved: Path,
+    reserved_outputs: set[Path],
     options: SanitizeOptions,
 ) -> ReportItem | None:
     if options.skip_symlinks and file.is_symlink():
@@ -126,23 +129,32 @@ def _sanitize_one(
         input_root=input_root,
         out_dir=out_dir,
         flat_output=options.flat_output,
+        reserved_outputs=reserved_outputs,
     )
+    reserved_outputs.add(output_path.resolve(strict=False))
     return _sanitize_file(file, output_path, options=options)
 
 
-def _compute_output_path(*, file: Path, input_root: Path, out_dir: Path, flat_output: bool) -> Path:
+def _compute_output_path(
+    *,
+    file: Path,
+    input_root: Path,
+    out_dir: Path,
+    flat_output: bool,
+    reserved_outputs: set[Path],
+) -> Path:
     if not flat_output:
         return out_dir / file.relative_to(input_root)
 
     out_path = out_dir / file.name
-    if not out_path.exists():
+    if not out_path.exists() and out_path.resolve(strict=False) not in reserved_outputs:
         return out_path
 
     stem = out_path.stem
     suffix = out_path.suffix
     for i in range(1, 10_000):
         candidate = out_dir / f"{stem}-{i}{suffix}"
-        if not candidate.exists():
+        if not candidate.exists() and candidate.resolve(strict=False) not in reserved_outputs:
             return candidate
 
     raise RuntimeError(f"unable to find available output path for {file}")

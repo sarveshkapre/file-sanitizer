@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 from pathlib import Path
 
 from PIL import Image
@@ -146,3 +147,29 @@ def test_dry_run_does_not_create_out_dir_when_report_elsewhere(tmp_path: Path) -
     )
     assert rc == 0
     assert not out_dir.exists()
+
+
+def test_flat_output_dry_run_dedupes_names(tmp_path: Path) -> None:
+    input_dir = tmp_path / "in"
+    (input_dir / "a").mkdir(parents=True)
+    (input_dir / "b").mkdir(parents=True)
+    (input_dir / "a" / "dup.txt").write_text("one", encoding="utf-8")
+    (input_dir / "b" / "dup.txt").write_text("two", encoding="utf-8")
+
+    out_dir = tmp_path / "out"
+    report = tmp_path / "report.jsonl"
+    rc = sanitize_path(
+        input_dir,
+        out_dir,
+        report,
+        options=SanitizeOptions(flat_output=True, copy_unsupported=True, dry_run=True),
+    )
+    assert rc == 0
+
+    output_paths = []
+    for line in report.read_text(encoding="utf-8").splitlines():
+        obj = json.loads(line)
+        if obj.get("output_path"):
+            output_paths.append(obj["output_path"])
+    assert len(output_paths) == 2
+    assert len(set(output_paths)) == 2
