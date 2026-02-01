@@ -173,3 +173,23 @@ def test_flat_output_dry_run_dedupes_names(tmp_path: Path) -> None:
             output_paths.append(obj["output_path"])
     assert len(output_paths) == 2
     assert len(set(output_paths)) == 2
+
+
+def test_out_dir_inside_input_does_not_reprocess_outputs(tmp_path: Path) -> None:
+    root = tmp_path / "root"
+    input_dir = root / "in"
+    input_dir.mkdir(parents=True)
+    (input_dir / "a.txt").write_text("hello", encoding="utf-8")
+
+    out_dir = input_dir / "out"
+    report = root / "report.jsonl"
+    rc = sanitize_path(
+        input_dir,
+        out_dir,
+        report,
+        options=SanitizeOptions(copy_unsupported=True, dry_run=False),
+    )
+    assert rc == 0
+
+    # If outputs were re-processed during traversal, we'd likely see nested out/out/...
+    assert not (out_dir / "out").exists()

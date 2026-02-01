@@ -66,7 +66,13 @@ def sanitize_path(
     report_path_resolved = report_path.resolve(strict=False)
 
     with report_path.open("w", encoding="utf-8") as out:
-        for file in _iter_files(input_path):
+        files: Iterator[Path]
+        if input_path.is_dir() and out_dir_resolved.is_relative_to(input_root_resolved):
+            files = iter([p for p in input_path.rglob("*") if p.is_file()])
+        else:
+            files = _iter_files(input_path)
+
+        for file in files:
             item = _sanitize_one(
                 file=file,
                 input_root=input_root,

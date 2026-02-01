@@ -14,6 +14,7 @@ One-line pitch: A fast, local CLI to sanitize files by stripping common metadata
 - Optional report summary record appended to JSONL via `--report-summary`.
 - CI-friendly strict mode: `--fail-on-warnings`.
 - `--dry-run` avoids creating output directories unless required for the report path.
+- Safe traversal when `--out` is inside input (prevents re-processing outputs).
 
 ## Next
 
