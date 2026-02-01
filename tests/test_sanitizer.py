@@ -193,3 +193,45 @@ def test_out_dir_inside_input_does_not_reprocess_outputs(tmp_path: Path) -> None
 
     # If outputs were re-processed during traversal, we'd likely see nested out/out/...
     assert not (out_dir / "out").exists()
+
+
+def test_exclude_by_segment_skips_matching_dir(tmp_path: Path) -> None:
+    input_dir = tmp_path / "in"
+    (input_dir / "skip").mkdir(parents=True)
+    (input_dir / "keep").mkdir(parents=True)
+    (input_dir / "skip" / "a.txt").write_text("nope", encoding="utf-8")
+    (input_dir / "keep" / "b.txt").write_text("ok", encoding="utf-8")
+
+    out_dir = tmp_path / "out"
+    report = tmp_path / "report.jsonl"
+    rc = sanitize_path(
+        input_dir,
+        out_dir,
+        report,
+        options=SanitizeOptions(copy_unsupported=True, exclude_globs=["skip"]),
+    )
+    assert rc == 0
+    assert not (out_dir / "skip" / "a.txt").exists()
+    assert (out_dir / "keep" / "b.txt").exists()
+
+    report_text = report.read_text(encoding="utf-8")
+    assert '"action": "excluded"' in report_text
+
+
+def test_exclude_by_path_glob_skips_matching_files(tmp_path: Path) -> None:
+    input_dir = tmp_path / "in"
+    (input_dir / "docs").mkdir(parents=True)
+    (input_dir / "docs" / "a.txt").write_text("nope", encoding="utf-8")
+    (input_dir / "docs" / "b.md").write_text("ok", encoding="utf-8")
+
+    out_dir = tmp_path / "out"
+    report = tmp_path / "report.jsonl"
+    rc = sanitize_path(
+        input_dir,
+        out_dir,
+        report,
+        options=SanitizeOptions(copy_unsupported=True, exclude_globs=["docs/*.txt"]),
+    )
+    assert rc == 0
+    assert not (out_dir / "docs" / "a.txt").exists()
+    assert (out_dir / "docs" / "b.md").exists()

@@ -55,6 +55,13 @@ def main(argv: list[str] | None = None) -> int:
         action="store_true",
         help="Exit non-zero if any warnings are emitted (useful for CI)",
     )
+    p_run.add_argument(
+        "--exclude",
+        action="append",
+        default=[],
+        metavar="GLOB",
+        help="Exclude paths matching this glob (repeatable, evaluated relative to input dir when input is a directory)",
+    )
     p_run.set_defaults(func=_run)
 
     args = parser.parse_args(argv)
@@ -73,7 +80,8 @@ def _run(args: argparse.Namespace) -> int:
         nonlocal warning_count, error_count
         # Keep callback typing loose so `sanitize_path` remains the source of truth.
         counts.update([str(getattr(item, "action"))])
-        warning_count += len(getattr(item, "warnings"))
+        if str(getattr(item, "action")) != "excluded":
+            warning_count += len(getattr(item, "warnings"))
         if str(getattr(item, "action")) == "error":
             error_count += 1
 
@@ -86,6 +94,7 @@ def _run(args: argparse.Namespace) -> int:
             overwrite=bool(args.overwrite),
             copy_unsupported=bool(args.copy_unsupported),
             dry_run=bool(args.dry_run),
+            exclude_globs=list(args.exclude),
         ),
         on_item=_on_item,
     )

@@ -28,6 +28,9 @@ Optional flags:
 # Skip unknown file types instead of copying them as-is
 file-sanitizer sanitize --input ./files --out ./sanitized --no-copy-unsupported
 
+# Exclude paths (repeatable; evaluated relative to input directory)
+file-sanitizer sanitize --input ./files --out ./sanitized --exclude .git --exclude node_modules
+
 # Flatten outputs into a single directory (may rename to avoid collisions)
 file-sanitizer sanitize --input ./files --out ./sanitized --flat
 

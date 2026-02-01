@@ -6,7 +6,9 @@ import shutil
 import tempfile
 from collections.abc import Callable, Iterator
 from dataclasses import dataclass
-from pathlib import Path
+from fnmatch import fnmatchcase
+from dataclasses import field
+from pathlib import Path, PurePosixPath
 from typing import Any
 
 from PIL import Image
@@ -25,6 +27,7 @@ class SanitizeOptions:
     copy_unsupported: bool = True
     skip_symlinks: bool = True
     dry_run: bool = False
+    exclude_globs: list[str] = field(default_factory=list)
 
 
 @dataclass(frozen=True)
@@ -54,6 +57,7 @@ def sanitize_path(
     on_item: Callable[[ReportItem], None] | None = None,
 ) -> int:
     opts = options or SanitizeOptions()
+    exclude_globs = opts.exclude_globs or []
 
     report_path.parent.mkdir(parents=True, exist_ok=True)
 
@@ -82,6 +86,7 @@ def sanitize_path(
                 report_path_resolved=report_path_resolved,
                 reserved_outputs=reserved_outputs,
                 options=opts,
+                exclude_globs=exclude_globs,
             )
             if item is None:
                 continue
@@ -113,7 +118,17 @@ def _sanitize_one(
     report_path_resolved: Path,
     reserved_outputs: set[Path],
     options: SanitizeOptions,
+    exclude_globs: list[str],
 ) -> ReportItem | None:
+    matched = _match_exclude_glob(file=file, input_root=input_root, globs=exclude_globs)
+    if matched is not None:
+        return ReportItem(
+            input_path=str(file),
+            output_path=None,
+            action="excluded",
+            warnings=[f"excluded by pattern: {matched}"],
+        )
+
     if options.skip_symlinks and file.is_symlink():
         return ReportItem(
             input_path=str(file),
@@ -403,3 +418,29 @@ def _copy_atomic(input_path: Path, output_path: Path) -> None:
 def _validate_image_readable(input_path: Path) -> None:
     with Image.open(input_path) as img:
         img.verify()
+
+
+def _match_exclude_glob(*, file: Path, input_root: Path, globs: list[str]) -> str | None:
+    if not globs:
+        return None
+
+    try:
+        rel = file.relative_to(input_root)
+        rel_posix = rel.as_posix()
+        rel_parts = rel_posix.split("/")
+    except Exception:
+        rel_posix = file.name
+        rel_parts = [file.name]
+
+    for raw in globs:
+        pat = raw.replace("\\", "/")
+        if "/" in pat or pat.startswith("**"):
+            if PurePosixPath(rel_posix).match(pat):
+                return raw
+            continue
+
+        # Segment-style matching (e.g., ".git", "node_modules", "*.tmp")
+        if any(fnmatchcase(part, pat) for part in rel_parts):
+            return raw
+
+    return None

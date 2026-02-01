@@ -11,6 +11,7 @@
 - Optional strict mode for CI: `--fail-on-warnings` exits non-zero if any warnings are present.
 - `--dry-run` avoids creating output directories unless required for the report path.
 - When `--out` is under the input directory, the run now snapshots the file list up-front to avoid re-processing newly created outputs.
+- Add `--exclude` (repeatable) to skip matching paths (e.g. `.git`, `node_modules`) during traversal.
 
 ## Notes
 
