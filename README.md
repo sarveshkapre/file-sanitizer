@@ -36,4 +36,7 @@ file-sanitizer sanitize --input ./files --out ./sanitized --dry-run
 
 # Append a summary record to the report JSONL (useful for ingestion)
 file-sanitizer sanitize --input ./files --out ./sanitized --report-summary
+
+# Exit non-zero if any warnings are emitted (useful for CI policy)
+file-sanitizer sanitize --input ./files --out ./sanitized --dry-run --fail-on-warnings
 ```

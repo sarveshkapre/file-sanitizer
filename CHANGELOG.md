@@ -8,6 +8,7 @@
 - Add CLI flags: `--flat`, `--[no-]overwrite`, `--[no-]copy-unsupported`, `--dry-run`.
 - Print summary stats (counts by action) to stderr.
 - Add optional report summary record (`--report-summary`).
+- Add `--fail-on-warnings` (CI-friendly non-zero exit on warnings).
 
 ## v0.1.0 - 2026-01-31
 

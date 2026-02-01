@@ -12,6 +12,7 @@ One-line pitch: A fast, local CLI to sanitize files by stripping common metadata
 - CLI flags for safer runs: `--flat`, `--[no-]overwrite`, `--[no-]copy-unsupported`, `--dry-run`.
 - Summary stats printed to stderr (counts by action).
 - Optional report summary record appended to JSONL via `--report-summary`.
+- CI-friendly strict mode: `--fail-on-warnings`.
 
 ## Next
 
