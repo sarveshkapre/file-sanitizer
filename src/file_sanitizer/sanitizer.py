@@ -46,11 +46,20 @@ class SanitizeOptions:
 
 
 @dataclass(frozen=True)
+class WarningItem:
+    code: str
+    message: str
+
+    def to_dict(self) -> dict[str, str]:
+        return {"code": self.code, "message": self.message}
+
+
+@dataclass(frozen=True)
 class ReportItem:
     input_path: str
     output_path: str | None
     action: str
-    warnings: list[str]
+    warnings: list[WarningItem]
     error: str | None = None
 
     def to_dict(self) -> dict[str, Any]:
@@ -58,7 +67,7 @@ class ReportItem:
             "input_path": self.input_path,
             "output_path": self.output_path,
             "action": self.action,
-            "warnings": self.warnings,
+            "warnings": [w.to_dict() for w in self.warnings],
             "error": self.error,
         }
 
@@ -154,7 +163,9 @@ def _sanitize_one(
             input_path=str(file),
             output_path=None,
             action="excluded",
-            warnings=[f"excluded by pattern: {matched}"],
+            warnings=[
+                WarningItem(code="excluded_by_pattern", message=f"excluded by pattern: {matched}")
+            ],
         )
 
     if options.skip_symlinks and file.is_symlink():
@@ -162,7 +173,7 @@ def _sanitize_one(
             input_path=str(file),
             output_path=None,
             action="skipped",
-            warnings=["symlink skipped"],
+            warnings=[WarningItem(code="symlink_skipped", message="symlink skipped")],
         )
 
     if file.resolve() == report_path_resolved:
@@ -218,11 +229,16 @@ def _sanitize_file(input_path: Path, output_path: Path, *, options: SanitizeOpti
             str(input_path),
             str(output_path),
             "skipped",
-            ["output exists; use --overwrite to replace"],
+            [
+                WarningItem(
+                    code="output_exists",
+                    message="output exists; use --overwrite to replace",
+                )
+            ],
         )
 
     suffix = input_path.suffix.lower()
-    warnings: list[str] = []
+    warnings: list[WarningItem] = []
     try:
         if suffix in IMAGE_EXTS:
             if options.dry_run:
@@ -247,13 +263,25 @@ def _sanitize_file(input_path: Path, output_path: Path, *, options: SanitizeOpti
 
         if options.copy_unsupported:
             if options.dry_run:
-                warnings.append("unsupported file type; would copy as-is")
+                warnings.append(
+                    WarningItem(
+                        code="unsupported_would_copy",
+                        message="unsupported file type; would copy as-is",
+                    )
+                )
                 return ReportItem(str(input_path), str(output_path), "would_copy", warnings)
             _copy_atomic(input_path, output_path)
-            warnings.append("unsupported file type; copied as-is")
+            warnings.append(
+                WarningItem(
+                    code="unsupported_copied",
+                    message="unsupported file type; copied as-is",
+                )
+            )
             return ReportItem(str(input_path), str(output_path), "copied", warnings)
 
-        warnings.append("unsupported file type; skipped")
+        warnings.append(
+            WarningItem(code="unsupported_skipped", message="unsupported file type; skipped")
+        )
         return ReportItem(
             str(input_path),
             None,
@@ -277,7 +305,7 @@ def _sanitize_image(input_path: Path, output_path: Path) -> None:
             tmp.unlink(missing_ok=True)
 
 
-def _sanitize_pdf(input_path: Path, output_path: Path) -> list[str]:
+def _sanitize_pdf(input_path: Path, output_path: Path) -> list[WarningItem]:
     input_bytes = input_path.read_bytes()
     sanitized, warnings = _sanitize_pdf_bytes(input_bytes)
 
@@ -291,12 +319,12 @@ def _sanitize_pdf(input_path: Path, output_path: Path) -> list[str]:
     return warnings
 
 
-def _scan_pdf_warnings(input_path: Path) -> list[str]:
+def _scan_pdf_warnings(input_path: Path) -> list[WarningItem]:
     reader = PdfReader(str(input_path))
     return _scan_pdf_risks(reader)
 
 
-def _scan_zip_warnings(input_path: Path, *, options: SanitizeOptions) -> list[str]:
+def _scan_zip_warnings(input_path: Path, *, options: SanitizeOptions) -> list[WarningItem]:
     with zipfile.ZipFile(input_path, "r") as zip_in:
         return _sanitize_zip_members(
             zip_in,
@@ -305,7 +333,9 @@ def _scan_zip_warnings(input_path: Path, *, options: SanitizeOptions) -> list[st
         )
 
 
-def _sanitize_zip(input_path: Path, output_path: Path, *, options: SanitizeOptions) -> list[str]:
+def _sanitize_zip(
+    input_path: Path, output_path: Path, *, options: SanitizeOptions
+) -> list[WarningItem]:
     tmp = _temp_path_for(output_path)
     try:
         with zipfile.ZipFile(input_path, "r") as zip_in, zipfile.ZipFile(tmp, "w") as zip_out:
@@ -326,36 +356,60 @@ def _sanitize_zip_members(
     *,
     zip_out: zipfile.ZipFile | None,
     options: SanitizeOptions,
-) -> list[str]:
-    warnings: set[str] = set()
+) -> list[WarningItem]:
+    warnings: set[WarningItem] = set()
     seen_names: set[str] = set()
     total_expanded_bytes = 0
 
     infos = sorted(zip_in.infolist(), key=lambda info: _normalized_zip_name(info.filename))
     if len(infos) > options.zip_max_members:
         warnings.add(
-            f"zip has {len(infos)} entries; processing limited to "
-            f"{options.zip_max_members} by policy"
+            WarningItem(
+                code="zip_entries_truncated",
+                message=(
+                    f"zip has {len(infos)} entries; processing limited to "
+                    f"{options.zip_max_members} by policy"
+                ),
+            )
         )
         infos = infos[: options.zip_max_members]
 
     for info in infos:
         output_name = _normalized_zip_name(info.filename)
         if not output_name:
-            warnings.add("zip has an empty entry name; skipped")
+            warnings.add(
+                WarningItem(
+                    code="zip_entry_empty_name", message="zip has an empty entry name; skipped"
+                )
+            )
             continue
 
         if _is_unsafe_zip_name(output_name):
-            warnings.add(f"zip entry '{info.filename}' has unsafe path; skipped")
+            warnings.add(
+                WarningItem(
+                    code="zip_entry_unsafe_path",
+                    message=f"zip entry '{info.filename}' has unsafe path; skipped",
+                )
+            )
             continue
 
         if output_name in seen_names:
-            warnings.add(f"zip entry '{info.filename}' is duplicated; skipped")
+            warnings.add(
+                WarningItem(
+                    code="zip_entry_duplicate",
+                    message=f"zip entry '{info.filename}' is duplicated; skipped",
+                )
+            )
             continue
         seen_names.add(output_name)
 
         if _zipinfo_is_symlink(info):
-            warnings.add(f"zip entry '{info.filename}' is a symlink; skipped")
+            warnings.add(
+                WarningItem(
+                    code="zip_entry_symlink",
+                    message=f"zip entry '{info.filename}' is a symlink; skipped",
+                )
+            )
             continue
 
         if info.is_dir():
@@ -364,15 +418,25 @@ def _sanitize_zip_members(
             continue
 
         if info.flag_bits & 0x1:
-            warnings.add(f"zip entry '{info.filename}' is encrypted; skipped")
+            warnings.add(
+                WarningItem(
+                    code="zip_entry_encrypted",
+                    message=f"zip entry '{info.filename}' is encrypted; skipped",
+                )
+            )
             continue
 
         suffix = Path(output_name).suffix.lower()
         expanded_size = max(int(info.file_size), 0)
         if expanded_size > options.zip_max_member_uncompressed_bytes:
             warnings.add(
-                f"zip entry '{info.filename}' expanded size {expanded_size} exceeds "
-                f"limit {options.zip_max_member_uncompressed_bytes}; skipped"
+                WarningItem(
+                    code="zip_entry_oversize",
+                    message=(
+                        f"zip entry '{info.filename}' expanded size {expanded_size} exceeds "
+                        f"limit {options.zip_max_member_uncompressed_bytes}; skipped"
+                    ),
+                )
             )
             continue
 
@@ -380,8 +444,13 @@ def _sanitize_zip_members(
         ratio = _zip_compression_ratio(expanded_size, compressed_size)
         if ratio > options.zip_max_compression_ratio:
             warnings.add(
-                f"zip entry '{info.filename}' compression ratio {_format_ratio(ratio)} exceeds "
-                f"limit {_format_ratio(options.zip_max_compression_ratio)}; skipped"
+                WarningItem(
+                    code="zip_entry_compression_ratio_exceeded",
+                    message=(
+                        f"zip entry '{info.filename}' compression ratio {_format_ratio(ratio)} exceeds "
+                        f"limit {_format_ratio(options.zip_max_compression_ratio)}; skipped"
+                    ),
+                )
             )
             continue
 
@@ -391,29 +460,54 @@ def _sanitize_zip_members(
                     data = zip_in.read(info)
                 except Exception as exc:  # noqa: BLE001
                     warnings.add(
-                        f"zip entry '{info.filename}' failed to read nested archive: {exc}; skipped"
+                        WarningItem(
+                            code="zip_nested_archive_read_failed",
+                            message=(
+                                f"zip entry '{info.filename}' failed to read nested archive: {exc}; skipped"
+                            ),
+                        )
                     )
                     continue
                 if total_expanded_bytes + len(data) > options.zip_max_total_uncompressed_bytes:
                     warnings.add(
-                        "zip expanded size limit exceeded "
-                        f"({options.zip_max_total_uncompressed_bytes} bytes); "
-                        f"nested archive '{info.filename}' skipped"
+                        WarningItem(
+                            code="zip_total_expanded_limit_exceeded",
+                            message=(
+                                "zip expanded size limit exceeded "
+                                f"({options.zip_max_total_uncompressed_bytes} bytes); "
+                                f"nested archive '{info.filename}' skipped"
+                            ),
+                        )
                     )
                     continue
                 total_expanded_bytes += len(data)
-                warnings.add(f"zip entry '{info.filename}' is nested archive; copied by policy")
+                warnings.add(
+                    WarningItem(
+                        code="zip_nested_archive_copied",
+                        message=f"zip entry '{info.filename}' is nested archive; copied by policy",
+                    )
+                )
                 if zip_out is not None:
                     _write_zip_member(zip_out, info, output_name, data)
             else:
-                warnings.add(f"zip entry '{info.filename}' is nested archive; skipped by policy")
+                warnings.add(
+                    WarningItem(
+                        code="zip_nested_archive_skipped",
+                        message=f"zip entry '{info.filename}' is nested archive; skipped by policy",
+                    )
+                )
             continue
 
         if total_expanded_bytes + expanded_size > options.zip_max_total_uncompressed_bytes:
             warnings.add(
-                "zip expanded size limit exceeded "
-                f"({options.zip_max_total_uncompressed_bytes} bytes); "
-                f"entry '{info.filename}' and remaining data may be skipped"
+                WarningItem(
+                    code="zip_total_expanded_limit_exceeded",
+                    message=(
+                        "zip expanded size limit exceeded "
+                        f"({options.zip_max_total_uncompressed_bytes} bytes); "
+                        f"entry '{info.filename}' and remaining data may be skipped"
+                    ),
+                )
             )
             continue
 
@@ -426,21 +520,41 @@ def _sanitize_zip_members(
             elif suffix in PDF_EXTS:
                 payload, pdf_warnings = _sanitize_pdf_bytes(data)
                 for warning in pdf_warnings:
-                    warnings.add(f"zip entry '{info.filename}': {warning}")
+                    warnings.add(
+                        WarningItem(
+                            code=warning.code,
+                            message=f"zip entry '{info.filename}': {warning.message}",
+                        )
+                    )
             elif options.copy_unsupported:
                 payload = data
-                warnings.add(f"zip entry '{info.filename}' unsupported; copied as-is")
+                warnings.add(
+                    WarningItem(
+                        code="zip_entry_unsupported_copied",
+                        message=f"zip entry '{info.filename}' unsupported; copied as-is",
+                    )
+                )
             else:
-                warnings.add(f"zip entry '{info.filename}' unsupported; skipped")
+                warnings.add(
+                    WarningItem(
+                        code="zip_entry_unsupported_skipped",
+                        message=f"zip entry '{info.filename}' unsupported; skipped",
+                    )
+                )
                 continue
         except Exception as exc:  # noqa: BLE001
-            warnings.add(f"zip entry '{info.filename}' failed to sanitize: {exc}; skipped")
+            warnings.add(
+                WarningItem(
+                    code="zip_entry_sanitize_failed",
+                    message=f"zip entry '{info.filename}' failed to sanitize: {exc}; skipped",
+                )
+            )
             continue
 
         if zip_out is not None:
             _write_zip_member(zip_out, info, output_name, payload)
 
-    return sorted(warnings)
+    return sorted(warnings, key=lambda w: (w.code, w.message))
 
 
 def _zip_compression_ratio(expanded_size: int, compressed_size: int) -> float:
@@ -517,7 +631,7 @@ def _sanitize_image_bytes(input_bytes: bytes, *, suffix: str) -> bytes:
     return out.getvalue()
 
 
-def _sanitize_pdf_bytes(input_bytes: bytes) -> tuple[bytes, list[str]]:
+def _sanitize_pdf_bytes(input_bytes: bytes) -> tuple[bytes, list[WarningItem]]:
     reader = PdfReader(io.BytesIO(input_bytes))
     warnings = _scan_pdf_risks(reader)
 
@@ -540,8 +654,8 @@ def _image_format_for_suffix(suffix: str) -> str:
     }[suffix]
 
 
-def _scan_pdf_risks(reader: PdfReader) -> list[str]:
-    warnings: set[str] = set()
+def _scan_pdf_risks(reader: PdfReader) -> list[WarningItem]:
+    warnings: set[WarningItem] = set()
     try:
         root = _pdf_deref(reader.trailer.get("/Root"))
         if isinstance(root, DictionaryObject):
@@ -552,40 +666,75 @@ def _scan_pdf_risks(reader: PdfReader) -> list[str]:
             if isinstance(page_obj, DictionaryObject):
                 _scan_pdf_page(page_obj, warnings)
     except Exception as exc:  # noqa: BLE001
-        warnings.add(f"pdf scan failed: {exc}")
+        warnings.add(WarningItem(code="pdf_scan_failed", message=f"pdf scan failed: {exc}"))
 
-    return sorted(warnings)
+    return sorted(warnings, key=lambda w: (w.code, w.message))
 
 
-def _scan_pdf_catalog(root: DictionaryObject, warnings: set[str]) -> None:
+def _scan_pdf_catalog(root: DictionaryObject, warnings: set[WarningItem]) -> None:
     if "/OpenAction" in root:
-        warnings.add("pdf has /OpenAction (auto-exec on open) — not removed")
+        warnings.add(
+            WarningItem(
+                code="pdf_risk_open_action",
+                message="pdf has /OpenAction (auto-exec on open) -- not removed",
+            )
+        )
         warnings.update(_scan_pdf_action(root.get("/OpenAction"), context="/OpenAction"))
 
     if "/AA" in root:
-        warnings.add("pdf has /AA (additional actions) — not removed")
+        warnings.add(
+            WarningItem(
+                code="pdf_risk_additional_actions",
+                message="pdf has /AA (additional actions) -- not removed",
+            )
+        )
         aa = _pdf_deref(root.get("/AA"))
         if isinstance(aa, DictionaryObject):
             for k, v in aa.items():
                 warnings.update(_scan_pdf_action(v, context=f"/AA {k}"))
 
     if "/AcroForm" in root:
-        warnings.add("pdf has forms (/AcroForm) — not removed")
+        warnings.add(
+            WarningItem(
+                code="pdf_risk_forms",
+                message="pdf has forms (/AcroForm) -- not removed",
+            )
+        )
         acro = _pdf_deref(root.get("/AcroForm"))
         if isinstance(acro, DictionaryObject) and "/XFA" in acro:
-            warnings.add("pdf has XFA forms (/XFA) — not removed")
+            warnings.add(
+                WarningItem(
+                    code="pdf_risk_xfa_forms",
+                    message="pdf has XFA forms (/XFA) -- not removed",
+                )
+            )
 
     names = _pdf_deref(root.get("/Names"))
     if isinstance(names, DictionaryObject):
         if "/JavaScript" in names:
-            warnings.add("pdf has JavaScript name tree (/Names/JavaScript) — not removed")
+            warnings.add(
+                WarningItem(
+                    code="pdf_risk_javascript_tree",
+                    message="pdf has JavaScript name tree (/Names/JavaScript) -- not removed",
+                )
+            )
         if "/EmbeddedFiles" in names:
-            warnings.add("pdf has embedded files (/Names/EmbeddedFiles) — not removed")
+            warnings.add(
+                WarningItem(
+                    code="pdf_risk_embedded_files",
+                    message="pdf has embedded files (/Names/EmbeddedFiles) -- not removed",
+                )
+            )
 
 
-def _scan_pdf_page(page: DictionaryObject, warnings: set[str]) -> None:
+def _scan_pdf_page(page: DictionaryObject, warnings: set[WarningItem]) -> None:
     if "/AA" in page:
-        warnings.add("pdf page has /AA (additional actions) — not removed")
+        warnings.add(
+            WarningItem(
+                code="pdf_risk_page_additional_actions",
+                message="pdf page has /AA (additional actions) -- not removed",
+            )
+        )
         aa = _pdf_deref(page.get("/AA"))
         if isinstance(aa, DictionaryObject):
             for k, v in aa.items():
@@ -599,38 +748,73 @@ def _scan_pdf_page(page: DictionaryObject, warnings: set[str]) -> None:
                 continue
             if str(annot.get("/Subtype")) == "/FileAttachment":
                 warnings.add(
-                    "pdf has file attachment annotation (/Subtype /FileAttachment) — not removed"
+                    WarningItem(
+                        code="pdf_risk_file_attachment_annotation",
+                        message=(
+                            "pdf has file attachment annotation "
+                            "(/Subtype /FileAttachment) -- not removed"
+                        ),
+                    )
                 )
             if "/A" in annot:
                 warnings.update(_scan_pdf_action(annot.get("/A"), context="annotation /A"))
             if "/AA" in annot:
-                warnings.add("pdf annotation has /AA (additional actions) — not removed")
+                warnings.add(
+                    WarningItem(
+                        code="pdf_risk_annotation_additional_actions",
+                        message="pdf annotation has /AA (additional actions) -- not removed",
+                    )
+                )
                 aa = _pdf_deref(annot.get("/AA"))
                 if isinstance(aa, DictionaryObject):
                     for k, v in aa.items():
                         warnings.update(_scan_pdf_action(v, context=f"annotation /AA {k}"))
 
 
-def _scan_pdf_action(action_obj: object, *, context: str) -> set[str]:
+def _scan_pdf_action(action_obj: object, *, context: str) -> set[WarningItem]:
     action = _pdf_deref(action_obj)
-    warnings: set[str] = set()
+    warnings: set[WarningItem] = set()
 
     if isinstance(action, ArrayObject):
-        warnings.add(f"pdf {context} sets destination — not removed")
+        warnings.add(
+            WarningItem(
+                code="pdf_risk_destination",
+                message=f"pdf {context} sets destination -- not removed",
+            )
+        )
         return warnings
 
     if not isinstance(action, DictionaryObject):
-        warnings.add(f"pdf {context} has action — not removed")
+        warnings.add(
+            WarningItem(
+                code="pdf_risk_action_unknown", message=f"pdf {context} has action -- not removed"
+            )
+        )
         return warnings
 
     subtype = str(action.get("/S") or "")
     if subtype:
-        warnings.add(f"pdf {context} action subtype {subtype} — not removed")
+        warnings.add(
+            WarningItem(
+                code="pdf_risk_action_subtype",
+                message=f"pdf {context} action subtype {subtype} -- not removed",
+            )
+        )
     else:
-        warnings.add(f"pdf {context} has action without /S — not removed")
+        warnings.add(
+            WarningItem(
+                code="pdf_risk_action_no_subtype",
+                message=f"pdf {context} has action without /S -- not removed",
+            )
+        )
 
     if "/Next" in action:
-        warnings.add(f"pdf {context} action has /Next chain — not removed")
+        warnings.add(
+            WarningItem(
+                code="pdf_risk_action_next_chain",
+                message=f"pdf {context} action has /Next chain -- not removed",
+            )
+        )
 
     return warnings
 

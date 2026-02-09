@@ -14,6 +14,10 @@ from pypdf.generic import DictionaryObject, NameObject, TextStringObject
 from file_sanitizer.sanitizer import SanitizeOptions, sanitize_path
 
 
+def _warning_messages(warnings: list[dict[str, object]]) -> list[str]:
+    return [str(w.get("message", "")) for w in warnings]
+
+
 def test_sanitize_image(tmp_path: Path) -> None:
     img_path = tmp_path / "test.jpg"
     img = Image.new("RGB", (10, 10), color="red")
@@ -304,11 +308,11 @@ def test_zip_sanitize_sanitizes_members_and_skips_unsafe_entries(tmp_path: Path)
     assert out_zip.exists()
 
     line = json.loads(report.read_text(encoding="utf-8").strip())
-    warnings = line["warnings"]
-    assert any("unsafe path" in warning for warning in warnings)
-    assert any("symlink" in warning for warning in warnings)
-    assert any("unsupported; copied as-is" in warning for warning in warnings)
-    assert any("/OpenAction" in warning for warning in warnings)
+    messages = _warning_messages(line["warnings"])
+    assert any("unsafe path" in message for message in messages)
+    assert any("symlink" in message for message in messages)
+    assert any("unsupported; copied as-is" in message for message in messages)
+    assert any("/OpenAction" in message for message in messages)
 
     with zipfile.ZipFile(out_zip, "r") as zip_in:
         names = set(zip_in.namelist())
@@ -352,7 +356,7 @@ def test_zip_respects_copy_unsupported_false(tmp_path: Path) -> None:
         assert zip_in.namelist() == []
 
     warnings = json.loads(report.read_text(encoding="utf-8").strip())["warnings"]
-    assert any("unsupported; skipped" in warning for warning in warnings)
+    assert any("unsupported; skipped" in message for message in _warning_messages(warnings))
 
 
 def test_zip_dry_run_does_not_write_outputs(tmp_path: Path) -> None:
@@ -395,7 +399,9 @@ def test_zip_guardrail_limits_member_count(tmp_path: Path) -> None:
         assert set(zip_in.namelist()) == {"a.txt", "b.txt"}
 
     warnings = json.loads(report.read_text(encoding="utf-8").strip())["warnings"]
-    assert any("processing limited to 2 by policy" in warning for warning in warnings)
+    assert any(
+        "processing limited to 2 by policy" in message for message in _warning_messages(warnings)
+    )
 
 
 def test_zip_guardrail_skips_large_member(tmp_path: Path) -> None:
@@ -418,7 +424,10 @@ def test_zip_guardrail_skips_large_member(tmp_path: Path) -> None:
         assert zip_in.namelist() == []
 
     warnings = json.loads(report.read_text(encoding="utf-8").strip())["warnings"]
-    assert any("expanded size 10 exceeds limit 5; skipped" in warning for warning in warnings)
+    assert any(
+        "expanded size 10 exceeds limit 5; skipped" in message
+        for message in _warning_messages(warnings)
+    )
 
 
 def test_zip_guardrail_limits_total_expanded_bytes(tmp_path: Path) -> None:
@@ -442,7 +451,10 @@ def test_zip_guardrail_limits_total_expanded_bytes(tmp_path: Path) -> None:
         assert zip_in.namelist() == ["a.txt"]
 
     warnings = json.loads(report.read_text(encoding="utf-8").strip())["warnings"]
-    assert any("zip expanded size limit exceeded (10 bytes)" in warning for warning in warnings)
+    assert any(
+        "zip expanded size limit exceeded (10 bytes)" in message
+        for message in _warning_messages(warnings)
+    )
 
 
 def test_zip_guardrail_skips_high_compression_ratio(tmp_path: Path) -> None:
@@ -466,7 +478,8 @@ def test_zip_guardrail_skips_high_compression_ratio(tmp_path: Path) -> None:
 
     warnings = json.loads(report.read_text(encoding="utf-8").strip())["warnings"]
     assert any(
-        "compression ratio" in warning and "exceeds limit 2.0" in warning for warning in warnings
+        "compression ratio" in message and "exceeds limit 2.0" in message
+        for message in _warning_messages(warnings)
     )
 
 
@@ -491,7 +504,9 @@ def test_zip_nested_archive_default_policy_skips_member(tmp_path: Path) -> None:
         assert "nested/inner.zip" not in names
 
     warnings = json.loads(report.read_text(encoding="utf-8").strip())["warnings"]
-    assert any("nested archive; skipped by policy" in warning for warning in warnings)
+    assert any(
+        "nested archive; skipped by policy" in message for message in _warning_messages(warnings)
+    )
 
 
 def test_zip_nested_archive_copy_policy_keeps_member(tmp_path: Path) -> None:
@@ -520,7 +535,9 @@ def test_zip_nested_archive_copy_policy_keeps_member(tmp_path: Path) -> None:
         assert "nested/inner.zip" in names
 
     warnings = json.loads(report.read_text(encoding="utf-8").strip())["warnings"]
-    assert any("nested archive; copied by policy" in warning for warning in warnings)
+    assert any(
+        "nested archive; copied by policy" in message for message in _warning_messages(warnings)
+    )
 
 
 def test_zip_guardrails_apply_in_dry_run(tmp_path: Path) -> None:
@@ -539,7 +556,9 @@ def test_zip_guardrails_apply_in_dry_run(tmp_path: Path) -> None:
     assert not (out_dir / "bundle.zip").exists()
 
     warnings = json.loads(report.read_text(encoding="utf-8").strip())["warnings"]
-    assert any("nested archive; skipped by policy" in warning for warning in warnings)
+    assert any(
+        "nested archive; skipped by policy" in message for message in _warning_messages(warnings)
+    )
 
 
 def test_invalid_zip_options_raise_value_error(tmp_path: Path) -> None:

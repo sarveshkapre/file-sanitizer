@@ -41,7 +41,7 @@ def test_fixture_zip_regression_flow(tmp_path: Path) -> None:
     assert output_zip.exists()
 
     item = json.loads(report.read_text(encoding="utf-8").strip())
-    warnings = item["warnings"]
+    warnings = [w.get("message", "") for w in item["warnings"]]
     assert any("unsafe path" in warning for warning in warnings)
     assert any("symlink" in warning for warning in warnings)
 
