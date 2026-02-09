@@ -23,6 +23,12 @@ IMAGE_EXTS = {".jpg", ".jpeg", ".png", ".webp"}
 PDF_EXTS = {".pdf"}
 ZIP_EXTS = {".zip"}
 
+DEFAULT_ZIP_MAX_MEMBERS = 10_000
+DEFAULT_ZIP_MAX_MEMBER_UNCOMPRESSED_BYTES = 64 * 1024 * 1024
+DEFAULT_ZIP_MAX_TOTAL_UNCOMPRESSED_BYTES = 512 * 1024 * 1024
+DEFAULT_ZIP_MAX_COMPRESSION_RATIO = 100.0
+NESTED_ARCHIVE_POLICIES = {"skip", "copy"}
+
 
 @dataclass(frozen=True)
 class SanitizeOptions:
@@ -32,6 +38,11 @@ class SanitizeOptions:
     skip_symlinks: bool = True
     dry_run: bool = False
     exclude_globs: list[str] = field(default_factory=list)
+    zip_max_members: int = DEFAULT_ZIP_MAX_MEMBERS
+    zip_max_member_uncompressed_bytes: int = DEFAULT_ZIP_MAX_MEMBER_UNCOMPRESSED_BYTES
+    zip_max_total_uncompressed_bytes: int = DEFAULT_ZIP_MAX_TOTAL_UNCOMPRESSED_BYTES
+    zip_max_compression_ratio: float = DEFAULT_ZIP_MAX_COMPRESSION_RATIO
+    nested_archive_policy: str = "skip"
 
 
 @dataclass(frozen=True)
@@ -61,6 +72,7 @@ def sanitize_path(
     on_item: Callable[[ReportItem], None] | None = None,
 ) -> int:
     opts = options or SanitizeOptions()
+    _validate_options(opts)
     exclude_globs = opts.exclude_globs or []
 
     report_path.parent.mkdir(parents=True, exist_ok=True)
@@ -97,6 +109,20 @@ def sanitize_path(
                 on_item(item)
 
     return 0 if error_count == 0 else 2
+
+
+def _validate_options(options: SanitizeOptions) -> None:
+    if options.zip_max_members < 1:
+        raise ValueError("zip_max_members must be >= 1")
+    if options.zip_max_member_uncompressed_bytes < 1:
+        raise ValueError("zip_max_member_uncompressed_bytes must be >= 1")
+    if options.zip_max_total_uncompressed_bytes < 1:
+        raise ValueError("zip_max_total_uncompressed_bytes must be >= 1")
+    if options.zip_max_compression_ratio <= 0:
+        raise ValueError("zip_max_compression_ratio must be > 0")
+    if options.nested_archive_policy not in NESTED_ARCHIVE_POLICIES:
+        allowed = ", ".join(sorted(NESTED_ARCHIVE_POLICIES))
+        raise ValueError(f"nested_archive_policy must be one of: {allowed}")
 
 
 def _iter_files(input_path: Path) -> Iterator[Path]:
@@ -275,7 +301,7 @@ def _scan_zip_warnings(input_path: Path, *, options: SanitizeOptions) -> list[st
         return _sanitize_zip_members(
             zip_in,
             zip_out=None,
-            copy_unsupported=options.copy_unsupported,
+            options=options,
         )
 
 
@@ -286,7 +312,7 @@ def _sanitize_zip(input_path: Path, output_path: Path, *, options: SanitizeOptio
             warnings = _sanitize_zip_members(
                 zip_in,
                 zip_out=zip_out,
-                copy_unsupported=options.copy_unsupported,
+                options=options,
             )
         os.replace(tmp, output_path)
     finally:
@@ -299,12 +325,20 @@ def _sanitize_zip_members(
     zip_in: zipfile.ZipFile,
     *,
     zip_out: zipfile.ZipFile | None,
-    copy_unsupported: bool,
+    options: SanitizeOptions,
 ) -> list[str]:
     warnings: set[str] = set()
     seen_names: set[str] = set()
+    total_expanded_bytes = 0
 
     infos = sorted(zip_in.infolist(), key=lambda info: _normalized_zip_name(info.filename))
+    if len(infos) > options.zip_max_members:
+        warnings.add(
+            f"zip has {len(infos)} entries; processing limited to "
+            f"{options.zip_max_members} by policy"
+        )
+        infos = infos[: options.zip_max_members]
+
     for info in infos:
         output_name = _normalized_zip_name(info.filename)
         if not output_name:
@@ -333,8 +367,58 @@ def _sanitize_zip_members(
             warnings.add(f"zip entry '{info.filename}' is encrypted; skipped")
             continue
 
-        data = zip_in.read(info)
         suffix = Path(output_name).suffix.lower()
+        expanded_size = max(int(info.file_size), 0)
+        if expanded_size > options.zip_max_member_uncompressed_bytes:
+            warnings.add(
+                f"zip entry '{info.filename}' expanded size {expanded_size} exceeds "
+                f"limit {options.zip_max_member_uncompressed_bytes}; skipped"
+            )
+            continue
+
+        compressed_size = max(int(info.compress_size), 0)
+        ratio = _zip_compression_ratio(expanded_size, compressed_size)
+        if ratio > options.zip_max_compression_ratio:
+            warnings.add(
+                f"zip entry '{info.filename}' compression ratio {_format_ratio(ratio)} exceeds "
+                f"limit {_format_ratio(options.zip_max_compression_ratio)}; skipped"
+            )
+            continue
+
+        if suffix in ZIP_EXTS:
+            if options.nested_archive_policy == "copy":
+                try:
+                    data = zip_in.read(info)
+                except Exception as exc:  # noqa: BLE001
+                    warnings.add(
+                        f"zip entry '{info.filename}' failed to read nested archive: {exc}; skipped"
+                    )
+                    continue
+                if total_expanded_bytes + len(data) > options.zip_max_total_uncompressed_bytes:
+                    warnings.add(
+                        "zip expanded size limit exceeded "
+                        f"({options.zip_max_total_uncompressed_bytes} bytes); "
+                        f"nested archive '{info.filename}' skipped"
+                    )
+                    continue
+                total_expanded_bytes += len(data)
+                warnings.add(f"zip entry '{info.filename}' is nested archive; copied by policy")
+                if zip_out is not None:
+                    _write_zip_member(zip_out, info, output_name, data)
+            else:
+                warnings.add(f"zip entry '{info.filename}' is nested archive; skipped by policy")
+            continue
+
+        if total_expanded_bytes + expanded_size > options.zip_max_total_uncompressed_bytes:
+            warnings.add(
+                "zip expanded size limit exceeded "
+                f"({options.zip_max_total_uncompressed_bytes} bytes); "
+                f"entry '{info.filename}' and remaining data may be skipped"
+            )
+            continue
+
+        data = zip_in.read(info)
+        total_expanded_bytes += len(data)
 
         try:
             if suffix in IMAGE_EXTS:
@@ -343,7 +427,7 @@ def _sanitize_zip_members(
                 payload, pdf_warnings = _sanitize_pdf_bytes(data)
                 for warning in pdf_warnings:
                     warnings.add(f"zip entry '{info.filename}': {warning}")
-            elif copy_unsupported:
+            elif options.copy_unsupported:
                 payload = data
                 warnings.add(f"zip entry '{info.filename}' unsupported; copied as-is")
             else:
@@ -357,6 +441,20 @@ def _sanitize_zip_members(
             _write_zip_member(zip_out, info, output_name, payload)
 
     return sorted(warnings)
+
+
+def _zip_compression_ratio(expanded_size: int, compressed_size: int) -> float:
+    if expanded_size <= 0:
+        return 1.0
+    if compressed_size <= 0:
+        return float("inf")
+    return expanded_size / compressed_size
+
+
+def _format_ratio(value: float) -> str:
+    if value == float("inf"):
+        return "inf"
+    return f"{value:.1f}"
 
 
 def _write_zip_member(

@@ -6,7 +6,15 @@ import sys
 from collections import Counter
 from pathlib import Path
 
-from .sanitizer import SanitizeOptions, sanitize_path
+from .sanitizer import (
+    DEFAULT_ZIP_MAX_COMPRESSION_RATIO,
+    DEFAULT_ZIP_MAX_MEMBER_UNCOMPRESSED_BYTES,
+    DEFAULT_ZIP_MAX_MEMBERS,
+    DEFAULT_ZIP_MAX_TOTAL_UNCOMPRESSED_BYTES,
+    NESTED_ARCHIVE_POLICIES,
+    SanitizeOptions,
+    sanitize_path,
+)
 from .version import get_version
 
 
@@ -62,6 +70,49 @@ def main(argv: list[str] | None = None) -> int:
         metavar="GLOB",
         help="Exclude paths matching this glob (repeatable, evaluated relative to input dir when input is a directory)",
     )
+    p_run.add_argument(
+        "--zip-max-members",
+        type=int,
+        default=DEFAULT_ZIP_MAX_MEMBERS,
+        metavar="N",
+        help=f"Maximum ZIP entries processed (default: {DEFAULT_ZIP_MAX_MEMBERS})",
+    )
+    p_run.add_argument(
+        "--zip-max-member-bytes",
+        type=int,
+        default=DEFAULT_ZIP_MAX_MEMBER_UNCOMPRESSED_BYTES,
+        metavar="BYTES",
+        help=(
+            "Maximum uncompressed size allowed for a single ZIP member "
+            f"(default: {DEFAULT_ZIP_MAX_MEMBER_UNCOMPRESSED_BYTES})"
+        ),
+    )
+    p_run.add_argument(
+        "--zip-max-total-bytes",
+        type=int,
+        default=DEFAULT_ZIP_MAX_TOTAL_UNCOMPRESSED_BYTES,
+        metavar="BYTES",
+        help=(
+            "Maximum cumulative uncompressed bytes processed from ZIP members "
+            f"(default: {DEFAULT_ZIP_MAX_TOTAL_UNCOMPRESSED_BYTES})"
+        ),
+    )
+    p_run.add_argument(
+        "--zip-max-compression-ratio",
+        type=float,
+        default=DEFAULT_ZIP_MAX_COMPRESSION_RATIO,
+        metavar="RATIO",
+        help=(
+            "Maximum allowed ZIP member compression ratio "
+            f"(uncompressed/compressed, default: {DEFAULT_ZIP_MAX_COMPRESSION_RATIO})"
+        ),
+    )
+    p_run.add_argument(
+        "--nested-archive-policy",
+        choices=sorted(NESTED_ARCHIVE_POLICIES),
+        default="skip",
+        help="How nested ZIP members are handled (default: skip)",
+    )
     p_run.set_defaults(func=_run)
 
     args = parser.parse_args(argv)
@@ -95,6 +146,11 @@ def _run(args: argparse.Namespace) -> int:
             copy_unsupported=bool(args.copy_unsupported),
             dry_run=bool(args.dry_run),
             exclude_globs=list(args.exclude),
+            zip_max_members=int(args.zip_max_members),
+            zip_max_member_uncompressed_bytes=int(args.zip_max_member_bytes),
+            zip_max_total_uncompressed_bytes=int(args.zip_max_total_bytes),
+            zip_max_compression_ratio=float(args.zip_max_compression_ratio),
+            nested_archive_policy=str(args.nested_archive_policy),
         ),
         on_item=_on_item,
     )

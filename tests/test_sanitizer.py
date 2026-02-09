@@ -6,6 +6,7 @@ import stat
 import zipfile
 from pathlib import Path
 
+import pytest
 from PIL import Image
 from pypdf import PdfReader, PdfWriter
 from pypdf.generic import DictionaryObject, NameObject, TextStringObject
@@ -370,3 +371,188 @@ def test_zip_dry_run_does_not_write_outputs(tmp_path: Path) -> None:
     assert rc == 0
     assert not (out_dir / "bundle.zip").exists()
     assert "would_zip_sanitize" in report.read_text(encoding="utf-8")
+
+
+def test_zip_guardrail_limits_member_count(tmp_path: Path) -> None:
+    zip_path = tmp_path / "bundle.zip"
+    with zipfile.ZipFile(zip_path, "w") as zip_out:
+        zip_out.writestr("a.txt", "a")
+        zip_out.writestr("b.txt", "b")
+        zip_out.writestr("c.txt", "c")
+
+    out_dir = tmp_path / "out"
+    report = tmp_path / "report.jsonl"
+    rc = sanitize_path(
+        zip_path,
+        out_dir,
+        report,
+        options=SanitizeOptions(zip_max_members=2),
+    )
+    assert rc == 0
+
+    output_zip = out_dir / "bundle.zip"
+    with zipfile.ZipFile(output_zip, "r") as zip_in:
+        assert set(zip_in.namelist()) == {"a.txt", "b.txt"}
+
+    warnings = json.loads(report.read_text(encoding="utf-8").strip())["warnings"]
+    assert any("processing limited to 2 by policy" in warning for warning in warnings)
+
+
+def test_zip_guardrail_skips_large_member(tmp_path: Path) -> None:
+    zip_path = tmp_path / "bundle.zip"
+    with zipfile.ZipFile(zip_path, "w") as zip_out:
+        zip_out.writestr("big.txt", "0123456789")
+
+    out_dir = tmp_path / "out"
+    report = tmp_path / "report.jsonl"
+    rc = sanitize_path(
+        zip_path,
+        out_dir,
+        report,
+        options=SanitizeOptions(zip_max_member_uncompressed_bytes=5),
+    )
+    assert rc == 0
+
+    output_zip = out_dir / "bundle.zip"
+    with zipfile.ZipFile(output_zip, "r") as zip_in:
+        assert zip_in.namelist() == []
+
+    warnings = json.loads(report.read_text(encoding="utf-8").strip())["warnings"]
+    assert any("expanded size 10 exceeds limit 5; skipped" in warning for warning in warnings)
+
+
+def test_zip_guardrail_limits_total_expanded_bytes(tmp_path: Path) -> None:
+    zip_path = tmp_path / "bundle.zip"
+    with zipfile.ZipFile(zip_path, "w") as zip_out:
+        zip_out.writestr("a.txt", "123456")
+        zip_out.writestr("b.txt", "abcdef")
+
+    out_dir = tmp_path / "out"
+    report = tmp_path / "report.jsonl"
+    rc = sanitize_path(
+        zip_path,
+        out_dir,
+        report,
+        options=SanitizeOptions(zip_max_total_uncompressed_bytes=10),
+    )
+    assert rc == 0
+
+    output_zip = out_dir / "bundle.zip"
+    with zipfile.ZipFile(output_zip, "r") as zip_in:
+        assert zip_in.namelist() == ["a.txt"]
+
+    warnings = json.loads(report.read_text(encoding="utf-8").strip())["warnings"]
+    assert any("zip expanded size limit exceeded (10 bytes)" in warning for warning in warnings)
+
+
+def test_zip_guardrail_skips_high_compression_ratio(tmp_path: Path) -> None:
+    zip_path = tmp_path / "bundle.zip"
+    with zipfile.ZipFile(zip_path, "w", compression=zipfile.ZIP_DEFLATED) as zip_out:
+        zip_out.writestr("bomb.txt", b"0" * 50_000)
+
+    out_dir = tmp_path / "out"
+    report = tmp_path / "report.jsonl"
+    rc = sanitize_path(
+        zip_path,
+        out_dir,
+        report,
+        options=SanitizeOptions(zip_max_compression_ratio=2.0),
+    )
+    assert rc == 0
+
+    output_zip = out_dir / "bundle.zip"
+    with zipfile.ZipFile(output_zip, "r") as zip_in:
+        assert zip_in.namelist() == []
+
+    warnings = json.loads(report.read_text(encoding="utf-8").strip())["warnings"]
+    assert any(
+        "compression ratio" in warning and "exceeds limit 2.0" in warning for warning in warnings
+    )
+
+
+def test_zip_nested_archive_default_policy_skips_member(tmp_path: Path) -> None:
+    inner_buf = io.BytesIO()
+    with zipfile.ZipFile(inner_buf, "w") as nested_zip:
+        nested_zip.writestr("nested.txt", "hello")
+
+    outer_path = tmp_path / "outer.zip"
+    with zipfile.ZipFile(outer_path, "w") as zip_out:
+        zip_out.writestr("nested/inner.zip", inner_buf.getvalue())
+        zip_out.writestr("docs/note.txt", "ok")
+
+    out_dir = tmp_path / "out"
+    report = tmp_path / "report.jsonl"
+    rc = sanitize_path(outer_path, out_dir, report)
+    assert rc == 0
+
+    with zipfile.ZipFile(out_dir / "outer.zip", "r") as zip_in:
+        names = set(zip_in.namelist())
+        assert "docs/note.txt" in names
+        assert "nested/inner.zip" not in names
+
+    warnings = json.loads(report.read_text(encoding="utf-8").strip())["warnings"]
+    assert any("nested archive; skipped by policy" in warning for warning in warnings)
+
+
+def test_zip_nested_archive_copy_policy_keeps_member(tmp_path: Path) -> None:
+    inner_buf = io.BytesIO()
+    with zipfile.ZipFile(inner_buf, "w") as nested_zip:
+        nested_zip.writestr("nested.txt", "hello")
+
+    outer_path = tmp_path / "outer.zip"
+    with zipfile.ZipFile(outer_path, "w") as zip_out:
+        zip_out.writestr("nested/inner.zip", inner_buf.getvalue())
+        zip_out.writestr("docs/note.txt", "ok")
+
+    out_dir = tmp_path / "out"
+    report = tmp_path / "report.jsonl"
+    rc = sanitize_path(
+        outer_path,
+        out_dir,
+        report,
+        options=SanitizeOptions(nested_archive_policy="copy"),
+    )
+    assert rc == 0
+
+    with zipfile.ZipFile(out_dir / "outer.zip", "r") as zip_in:
+        names = set(zip_in.namelist())
+        assert "docs/note.txt" in names
+        assert "nested/inner.zip" in names
+
+    warnings = json.loads(report.read_text(encoding="utf-8").strip())["warnings"]
+    assert any("nested archive; copied by policy" in warning for warning in warnings)
+
+
+def test_zip_guardrails_apply_in_dry_run(tmp_path: Path) -> None:
+    inner_buf = io.BytesIO()
+    with zipfile.ZipFile(inner_buf, "w") as nested_zip:
+        nested_zip.writestr("nested.txt", "hello")
+
+    zip_path = tmp_path / "bundle.zip"
+    with zipfile.ZipFile(zip_path, "w") as zip_out:
+        zip_out.writestr("nested/inner.zip", inner_buf.getvalue())
+
+    out_dir = tmp_path / "out"
+    report = tmp_path / "report.jsonl"
+    rc = sanitize_path(zip_path, out_dir, report, options=SanitizeOptions(dry_run=True))
+    assert rc == 0
+    assert not (out_dir / "bundle.zip").exists()
+
+    warnings = json.loads(report.read_text(encoding="utf-8").strip())["warnings"]
+    assert any("nested archive; skipped by policy" in warning for warning in warnings)
+
+
+def test_invalid_zip_options_raise_value_error(tmp_path: Path) -> None:
+    zip_path = tmp_path / "bundle.zip"
+    with zipfile.ZipFile(zip_path, "w") as zip_out:
+        zip_out.writestr("a.txt", "a")
+
+    out_dir = tmp_path / "out"
+    report = tmp_path / "report.jsonl"
+    with pytest.raises(ValueError, match="zip_max_members must be >= 1"):
+        sanitize_path(
+            zip_path,
+            out_dir,
+            report,
+            options=SanitizeOptions(zip_max_members=0),
+        )
