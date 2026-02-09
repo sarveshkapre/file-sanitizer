@@ -23,6 +23,7 @@
 - Sanitize supported ZIP members (image/PDF) and preserve unsupported members by policy.
 - Make directory and ZIP member processing deterministic for stable reports.
 - Add ZIP bomb guardrails with configurable limits (`--zip-max-members`, `--zip-max-member-bytes`, `--zip-max-total-bytes`, `--zip-max-compression-ratio`).
+- Enforce ZIP member uncompressed-byte limits during streaming reads (resilient to malformed ZIP headers).
 - Add nested ZIP handling policy (`--nested-archive-policy` with secure default `skip`).
 - Add committed regression fixtures under `tests/fixtures/` for EXIF image, risky PDF, and mixed ZIP.
 - Add directory traversal guardrails for large inputs (`--max-files`, `--max-bytes`) and streaming deterministic directory walking.
