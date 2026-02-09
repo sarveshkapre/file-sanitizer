@@ -7,10 +7,12 @@
 - Gaps found during codebase exploration
 
 ## Candidate Features To Do
-- [ ] P1 (impact: med, effort: med, risk: low, confidence: med): Prune excluded directories during traversal for performance (avoid walking into `.git`, `node_modules`, etc).
+- [ ] P0 (selected; impact: high, effort: low, risk: low, confidence: high): Prune excluded directories during traversal for performance (avoid walking into `.git`, `node_modules`, etc).
+- [ ] P1 (selected; impact: high, effort: low, risk: low, confidence: med): Add allowlist mode (only export a configured set of extensions; skip everything else by default).
+- [ ] P1 (impact: med, effort: low, risk: low, confidence: med): Support writing the JSONL report to stdout (`--report -`) for easier piping/automation.
 - [ ] P1 (impact: med, effort: med, risk: low, confidence: med): Add benchmark/regression coverage for large directory and ZIP inputs (track runtime and memory).
 - [ ] P2 (impact: med, effort: high, risk: med, confidence: med): Add optional recursive nested-archive sanitization with a depth budget and expanded-bytes budget.
-- [ ] P2 (impact: med, effort: low, risk: low, confidence: med): Add allowlist mode (only export a configured set of extensions; skip everything else by default).
+- [ ] P2 (impact: med, effort: med, risk: low, confidence: low): Expand image support beyond JPEG/PNG/WebP (HEIC/TIFF) if dependency footprint remains acceptable.
 
 ## Implemented
 - [x] 2026-02-09: Added directory traversal guardrails for large directory inputs (`--max-files`, `--max-bytes`) and switched directory walking to a streaming deterministic iterator.
@@ -68,6 +70,10 @@
 - Market scan notes (2026-02-09): qpdf supports removing/clearing PDF metadata and deterministic output; baseline expectation: PDF metadata removal should be scriptable. https://qpdf.readthedocs.io/en/stable/cli.html
 - Market scan notes (2026-02-09): Dangerzone uses render-to-safe-output for risky documents; baseline expectation: users want a "safer export" story beyond metadata removal for untrusted docs. https://dangerzone.rocks/
 - Market scan notes (2026-02-09): OOXML macro signals are commonly detectable via `vbaProject.bin`; baseline expectation: macro-enabled formats should be surfaced as high-risk findings. https://arstdesign.com/articles/detecting-macros-in-ooxml-files.html
+- Market scan notes (2026-02-09, Cycle 3): MAT (Metadata Anonymisation Toolkit) positions “wide format coverage” as table stakes and publishes an explicit supported-format list (includes TIFF and OOXML among others). https://mat.boum.org/
+- Market scan notes (2026-02-09, Cycle 3): Dangerzone’s core value prop is “safe export” via sandboxed render-to-pixels then rebuild-to-PDF; this is a distinct category from metadata stripping and sets user expectations for handling untrusted documents. https://dangerzone.rocks/
+- Market scan notes (2026-02-09, Cycle 3): qpdf documents deterministic/static ID flags for reproducible output in tests; “deterministic output” is a common expectation for automation pipelines. https://qpdf.readthedocs.io/
+- Market scan notes (2026-02-09, Cycle 3): ExifTool’s official docs emphasize broad metadata read/write coverage; “strip metadata” workflows typically combine deterministic CLI flags with policy about what to retain. https://exiftool.org/exiftool_pod2.html
 
 ## Notes
 - This file is maintained by the autonomous clone loop.
