@@ -4,6 +4,7 @@ import json
 import os
 import subprocess
 import sys
+import zipfile
 from pathlib import Path
 
 
@@ -81,3 +82,37 @@ def test_cli_fail_on_warnings_sets_nonzero_exit(tmp_path: Path) -> None:
         text=True,
     )
     assert proc.returncode == 3
+
+
+def test_cli_risky_policy_block_blocks_outputs(tmp_path: Path) -> None:
+    input_zip = tmp_path / "bundle.zip"
+
+    with zipfile.ZipFile(input_zip, "w") as zf:
+        zf.writestr("docs/note.txt", "hello")
+
+    out_dir = tmp_path / "out"
+    report = tmp_path / "report.jsonl"
+
+    proc = subprocess.run(
+        [
+            sys.executable,
+            "-m",
+            "file_sanitizer",
+            "sanitize",
+            "--input",
+            str(input_zip),
+            "--out",
+            str(out_dir),
+            "--report",
+            str(report),
+            "--risky-policy",
+            "block",
+        ],
+        check=False,
+        capture_output=True,
+        text=True,
+    )
+
+    assert proc.returncode == 2
+    item = json.loads(report.read_text(encoding="utf-8").strip().splitlines()[0])
+    assert item["action"] == "blocked"

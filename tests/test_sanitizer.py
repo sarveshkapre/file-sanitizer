@@ -68,6 +68,41 @@ def test_pdf_risk_scan_warns_on_openaction_javascript(tmp_path: Path) -> None:
     assert "/JavaScript" in report_text
 
 
+def test_risky_policy_block_blocks_risky_pdf_output(tmp_path: Path) -> None:
+    pdf_path = tmp_path / "test.pdf"
+    writer = PdfWriter()
+    writer.add_blank_page(width=72, height=72)
+    writer._root_object.update(  # noqa: SLF001
+        {
+            NameObject("/OpenAction"): DictionaryObject(
+                {
+                    NameObject("/S"): NameObject("/JavaScript"),
+                    NameObject("/JS"): TextStringObject("app.alert('hi')"),
+                }
+            )
+        }
+    )
+    with pdf_path.open("wb") as fh:
+        writer.write(fh)
+
+    out_dir = tmp_path / "out"
+    report = tmp_path / "report.jsonl"
+    rc = sanitize_path(
+        pdf_path,
+        out_dir,
+        report,
+        options=SanitizeOptions(risky_policy="block"),
+    )
+    assert rc == 2
+    assert not (out_dir / "test.pdf").exists()
+
+    item = json.loads(report.read_text(encoding="utf-8").strip())
+    assert item["action"] == "blocked"
+    codes = {w["code"] for w in item["warnings"]}
+    assert "policy_blocked" in codes
+    assert "pdf_risk_open_action" in codes
+
+
 def test_directory_input_preserves_structure(tmp_path: Path) -> None:
     input_dir = tmp_path / "in"
     (input_dir / "nested").mkdir(parents=True)
@@ -433,6 +468,29 @@ def test_zip_dry_run_does_not_write_outputs(tmp_path: Path) -> None:
     assert rc == 0
     assert not (out_dir / "bundle.zip").exists()
     assert "would_zip_sanitize" in report.read_text(encoding="utf-8")
+
+
+def test_risky_policy_block_blocks_risky_zip_output(tmp_path: Path) -> None:
+    zip_path = tmp_path / "bundle.zip"
+    with zipfile.ZipFile(zip_path, "w") as zip_out:
+        zip_out.writestr("docs/note.txt", "hello")
+
+    out_dir = tmp_path / "out"
+    report = tmp_path / "report.jsonl"
+    rc = sanitize_path(
+        zip_path,
+        out_dir,
+        report,
+        options=SanitizeOptions(risky_policy="block"),
+    )
+    assert rc == 2
+    assert not (out_dir / "bundle.zip").exists()
+
+    item = json.loads(report.read_text(encoding="utf-8").strip())
+    assert item["action"] == "blocked"
+    codes = {w["code"] for w in item["warnings"]}
+    assert "policy_blocked" in codes
+    assert "zip_entry_unsupported_copied" in codes
 
 
 def test_zip_guardrail_limits_member_count(tmp_path: Path) -> None:

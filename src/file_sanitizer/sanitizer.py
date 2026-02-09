@@ -40,6 +40,7 @@ DEFAULT_ZIP_MAX_MEMBER_UNCOMPRESSED_BYTES = 64 * 1024 * 1024
 DEFAULT_ZIP_MAX_TOTAL_UNCOMPRESSED_BYTES = 512 * 1024 * 1024
 DEFAULT_ZIP_MAX_COMPRESSION_RATIO = 100.0
 NESTED_ARCHIVE_POLICIES = {"skip", "copy"}
+RISKY_POLICIES = {"warn", "block"}
 
 
 @dataclass(frozen=True)
@@ -55,6 +56,13 @@ class SanitizeOptions:
     zip_max_total_uncompressed_bytes: int = DEFAULT_ZIP_MAX_TOTAL_UNCOMPRESSED_BYTES
     zip_max_compression_ratio: float = DEFAULT_ZIP_MAX_COMPRESSION_RATIO
     nested_archive_policy: str = "skip"
+    risky_policy: str = "warn"
+
+
+class BlockedByPolicy(Exception):
+    def __init__(self, *, warnings: list[WarningItem]) -> None:
+        super().__init__("blocked by policy")
+        self.warnings = warnings
 
 
 @dataclass(frozen=True)
@@ -82,6 +90,28 @@ class ReportItem:
             "warnings": [w.to_dict() for w in self.warnings],
             "error": self.error,
         }
+
+
+def _is_risky_warning(w: WarningItem) -> bool:
+    if w.code.startswith("pdf_risk_") or w.code == "pdf_scan_failed":
+        return True
+    if w.code in {
+        "office_macro_enabled",
+        "office_macro_indicator_vbaproject",
+        "office_ooxml_scan_failed",
+    }:
+        return True
+    if w.code.startswith("zip_"):
+        return True
+    return False
+
+
+def _has_risky_findings(warnings: list[WarningItem]) -> bool:
+    return any(_is_risky_warning(w) for w in warnings)
+
+
+def _policy_blocked_warning() -> WarningItem:
+    return WarningItem(code="policy_blocked", message="blocked by risky_policy=block")
 
 
 def sanitize_path(
@@ -122,7 +152,7 @@ def sanitize_path(
             if item is None:
                 continue
 
-            if item.action == "error":
+            if item.action in {"error", "blocked"}:
                 error_count += 1
 
             out.write(json.dumps(item.to_dict()) + "\n")
@@ -144,6 +174,9 @@ def _validate_options(options: SanitizeOptions) -> None:
     if options.nested_archive_policy not in NESTED_ARCHIVE_POLICIES:
         allowed = ", ".join(sorted(NESTED_ARCHIVE_POLICIES))
         raise ValueError(f"nested_archive_policy must be one of: {allowed}")
+    if options.risky_policy not in RISKY_POLICIES:
+        allowed = ", ".join(sorted(RISKY_POLICIES))
+        raise ValueError(f"risky_policy must be one of: {allowed}")
 
 
 def _iter_files(input_path: Path) -> Iterator[Path]:
@@ -309,6 +342,14 @@ def _sanitize_file(input_path: Path, output_path: Path, *, options: SanitizeOpti
     try:
         if suffix in OFFICE_OOXML_EXTS:
             warnings.extend(_scan_office_macro_indicators_path(input_path))
+            if options.risky_policy == "block" and _has_risky_findings(warnings):
+                warnings.append(_policy_blocked_warning())
+                return ReportItem(
+                    str(input_path),
+                    None,
+                    "would_block" if options.dry_run else "blocked",
+                    warnings,
+                )
 
         if suffix in IMAGE_EXTS:
             if options.dry_run:
@@ -321,12 +362,18 @@ def _sanitize_file(input_path: Path, output_path: Path, *, options: SanitizeOpti
         if suffix in PDF_EXTS:
             if options.dry_run:
                 warnings.extend(_scan_pdf_warnings(input_path))
+                if options.risky_policy == "block" and _has_risky_findings(warnings):
+                    warnings.append(_policy_blocked_warning())
+                    return ReportItem(str(input_path), None, "would_block", warnings)
                 return ReportItem(str(input_path), str(output_path), "would_pdf_sanitize", warnings)
-            warnings.extend(_sanitize_pdf(input_path, output_path))
+            warnings.extend(_sanitize_pdf(input_path, output_path, options=options))
             return ReportItem(str(input_path), str(output_path), "pdf_sanitized", warnings)
         if suffix in ZIP_EXTS:
             if options.dry_run:
                 warnings.extend(_scan_zip_warnings(input_path, options=options))
+                if options.risky_policy == "block" and _has_risky_findings(warnings):
+                    warnings.append(_policy_blocked_warning())
+                    return ReportItem(str(input_path), None, "would_block", warnings)
                 return ReportItem(str(input_path), str(output_path), "would_zip_sanitize", warnings)
             warnings.extend(_sanitize_zip(input_path, output_path, options=options))
             return ReportItem(str(input_path), str(output_path), "zip_sanitized", warnings)
@@ -358,6 +405,10 @@ def _sanitize_file(input_path: Path, output_path: Path, *, options: SanitizeOpti
             "would_skip" if options.dry_run else "skipped",
             warnings,
         )
+    except BlockedByPolicy as exc:
+        blocked_warnings = list(exc.warnings)
+        blocked_warnings.append(_policy_blocked_warning())
+        return ReportItem(str(input_path), None, "blocked", blocked_warnings)
     except Exception as exc:  # noqa: BLE001
         return ReportItem(str(input_path), str(output_path), "error", warnings, error=str(exc))
 
@@ -375,9 +426,13 @@ def _sanitize_image(input_path: Path, output_path: Path) -> None:
             tmp.unlink(missing_ok=True)
 
 
-def _sanitize_pdf(input_path: Path, output_path: Path) -> list[WarningItem]:
+def _sanitize_pdf(
+    input_path: Path, output_path: Path, *, options: SanitizeOptions
+) -> list[WarningItem]:
     input_bytes = input_path.read_bytes()
     sanitized, warnings = _sanitize_pdf_bytes(input_bytes)
+    if options.risky_policy == "block" and _has_risky_findings(warnings):
+        raise BlockedByPolicy(warnings=warnings)
 
     tmp = _temp_path_for(output_path)
     try:
@@ -414,6 +469,8 @@ def _sanitize_zip(
                 zip_out=zip_out,
                 options=options,
             )
+        if options.risky_policy == "block" and _has_risky_findings(warnings):
+            raise BlockedByPolicy(warnings=warnings)
         os.replace(tmp, output_path)
     finally:
         if tmp.exists():

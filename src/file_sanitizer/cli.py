@@ -12,6 +12,7 @@ from .sanitizer import (
     DEFAULT_ZIP_MAX_MEMBERS,
     DEFAULT_ZIP_MAX_TOTAL_UNCOMPRESSED_BYTES,
     NESTED_ARCHIVE_POLICIES,
+    RISKY_POLICIES,
     SanitizeOptions,
     sanitize_path,
 )
@@ -113,6 +114,12 @@ def main(argv: list[str] | None = None) -> int:
         default="skip",
         help="How nested ZIP members are handled (default: skip)",
     )
+    p_run.add_argument(
+        "--risky-policy",
+        choices=sorted(RISKY_POLICIES),
+        default="warn",
+        help="How risky findings are handled (default: warn; use block to skip writing risky outputs)",
+    )
     p_run.set_defaults(func=_run)
 
     args = parser.parse_args(argv)
@@ -133,7 +140,7 @@ def _run(args: argparse.Namespace) -> int:
         counts.update([str(getattr(item, "action"))])
         if str(getattr(item, "action")) != "excluded":
             warning_count += len(getattr(item, "warnings"))
-        if str(getattr(item, "action")) == "error":
+        if str(getattr(item, "action")) in {"error", "blocked"}:
             error_count += 1
 
     rc = sanitize_path(
@@ -151,6 +158,7 @@ def _run(args: argparse.Namespace) -> int:
             zip_max_total_uncompressed_bytes=int(args.zip_max_total_bytes),
             zip_max_compression_ratio=float(args.zip_max_compression_ratio),
             nested_archive_policy=str(args.nested_archive_policy),
+            risky_policy=str(args.risky_policy),
         ),
         on_item=_on_item,
     )
