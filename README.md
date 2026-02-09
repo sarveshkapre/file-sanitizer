@@ -85,3 +85,10 @@ Notes:
 Report contract:
 - Schema documentation: `docs/report.md`
 - Optional JSON Schema (per JSONL line): `docs/report.schema.json`
+
+## Benchmark (Local)
+
+```bash
+.venv/bin/python scripts/bench_sanitize.py --kind dir --count 20000
+.venv/bin/python scripts/bench_sanitize.py --kind zip --count 20000
+```
