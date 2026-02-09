@@ -7,4 +7,5 @@
 ## Next
 
 - Office document macro detection.
-- Batch ZIP processing.
+- Nested archive policy and zip-bomb safeguards.
+- Trust policy mode (`warn` vs `block`) for risky PDF/ZIP findings.

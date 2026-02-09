@@ -9,6 +9,8 @@ One-line pitch: A fast, local CLI to sanitize files by stripping common metadata
 - Atomic writes (avoid partially-written outputs on failure).
 - JSONL report output with per-file actions/warnings/errors.
 - PDF risk scanning warnings (OpenAction/actions/forms/attachments) included in the report.
+- ZIP archive sanitization (sanitize image/PDF members, handle unsupported members via policy).
+- ZIP member hardening warnings (unsafe paths, symlinks, encrypted/duplicate entries are skipped).
 - CLI flags for safer runs: `--flat`, `--[no-]overwrite`, `--[no-]copy-unsupported`, `--dry-run`.
 - Summary stats printed to stderr (counts by action).
 - Optional report summary record appended to JSONL via `--report-summary`.
@@ -16,10 +18,13 @@ One-line pitch: A fast, local CLI to sanitize files by stripping common metadata
 - `--dry-run` avoids creating output directories unless required for the report path.
 - Safe traversal when `--out` is inside input (prevents re-processing outputs).
 - Path exclusions via `--exclude` (repeatable).
+- Deterministic traversal/member ordering for reproducible reports.
+- Golden fixture corpus under `tests/fixtures/` for EXIF image, risky PDF, and mixed ZIP regression tests.
 
 ## Next
 
-- Add a small golden test corpus under `tests/fixtures/` (EXIF’d JPEG, metadata’d PDF).
+- Office document macro detection with clear warning taxonomy.
+- Archive recursion/depth/size guardrails for nested archives.
 
 ## Top Risks / Unknowns
 

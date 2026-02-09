@@ -1,3 +1,25 @@
+# Update (2026-02-09)
+
+## Shipped
+
+- Added `.zip` archive sanitization: image/PDF members are sanitized, unsupported members follow copy/skip policy.
+- Hardened ZIP processing with warning + skip behavior for unsafe paths, symlinks, encrypted entries, and duplicates.
+- Made directory and ZIP member iteration deterministic for reproducible report ordering.
+- Added committed fixtures in `tests/fixtures/` (EXIF JPEG, risky PDF, mixed ZIP) with fixture-backed regression tests.
+
+## Notes
+
+- ZIP sanitization is metadata-focused for supported file types; it is not malware scanning.
+- PDFs in ZIPs still emit risk warnings for active-content indicators.
+
+## Verification
+
+```bash
+make check
+```
+
+---
+
 # Update (2026-02-01)
 
 ## Shipped

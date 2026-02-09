@@ -6,8 +6,10 @@ Local file sanitizer that removes common metadata from images and PDFs.
 
 - Strip EXIF from images.
 - Remove PDF metadata.
+- Sanitize ZIP archives by sanitizing supported members and filtering unsafe members.
 - JSONL report output.
 - Preserve directory structure by default (avoids filename collisions).
+- Deterministic traversal/report ordering for reproducible runs.
 
 ## Quickstart
 
@@ -21,6 +23,8 @@ make check
 ```bash
 file-sanitizer sanitize --input ./files --out ./sanitized
 ```
+
+`--input` can be either a directory/file or a `.zip` archive.
 
 Optional flags:
 
@@ -42,4 +46,11 @@ file-sanitizer sanitize --input ./files --out ./sanitized --report-summary
 
 # Exit non-zero if any warnings are emitted (useful for CI policy)
 file-sanitizer sanitize --input ./files --out ./sanitized --dry-run --fail-on-warnings
+
+# Sanitize a ZIP archive in place (supported members are re-written)
+file-sanitizer sanitize --input ./drop/batch.zip --out ./sanitized
 ```
+
+Notes:
+- ZIP handling skips unsafe members (for example path traversal paths or symlinks) and reports warnings.
+- Unsupported ZIP members are copied as-is by default (use `--no-copy-unsupported` to skip them).
