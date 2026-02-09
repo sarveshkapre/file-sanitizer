@@ -337,7 +337,9 @@ def _compute_output_path(
     raise RuntimeError(f"unable to find available output path for {file}")
 
 
-def _scan_office_macro_indicators_path(path: Path) -> list[WarningItem]:
+def _scan_office_macro_indicators_path(
+    path: Path, *, assume_ooxml: bool = False
+) -> list[WarningItem]:
     suffix = path.suffix.lower()
     warnings: list[WarningItem] = []
 
@@ -349,7 +351,7 @@ def _scan_office_macro_indicators_path(path: Path) -> list[WarningItem]:
             )
         )
 
-    if suffix in OFFICE_OOXML_EXTS:
+    if assume_ooxml or suffix in OFFICE_OOXML_EXTS:
         try:
             with zipfile.ZipFile(path, "r") as zf:
                 names = zf.namelist()
@@ -411,9 +413,70 @@ def _sanitize_file(input_path: Path, output_path: Path, *, options: SanitizeOpti
 
     suffix = input_path.suffix.lower()
     warnings: list[WarningItem] = []
+    detected = _sniff_magic_path(input_path)
+
+    is_pdf_by_ext = suffix in PDF_EXTS
+    is_pdf_by_magic = detected == "pdf"
+    # PDFs should begin with "%PDF-". If they don't, treat them as unsupported to avoid
+    # feeding non-PDFs into the parser (and to surface a clear warning instead of a hard error).
+    if is_pdf_by_ext and not is_pdf_by_magic:
+        warnings.append(
+            WarningItem(
+                code="content_type_mismatch",
+                message=(
+                    f"extension {suffix} does not match detected content type {detected or 'unknown'}; "
+                    "treating as unsupported"
+                ),
+            )
+        )
+        is_pdf_by_ext = False
+    if is_pdf_by_magic and not is_pdf_by_ext:
+        warnings.append(
+            WarningItem(
+                code="content_type_detected",
+                message=f"detected PDF by magic bytes; sanitizing as PDF (extension {suffix or '<none>'})",
+            )
+        )
+
+    is_office = suffix in OFFICE_OOXML_EXTS
+    if not is_office and detected == "zip" and suffix not in ZIP_EXTS:
+        if _zip_looks_like_ooxml(input_path):
+            is_office = True
+            warnings.append(
+                WarningItem(
+                    code="content_type_detected_ooxml",
+                    message=(
+                        "detected OOXML-like structure inside ZIP container; treating as Office document "
+                        f"(extension {suffix or '<none>'})"
+                    ),
+                )
+            )
+
+    is_zip_by_ext = suffix in ZIP_EXTS
+    is_zip_by_magic = detected == "zip" and not is_office
+    if is_zip_by_ext and detected in {"pdf", "jpeg", "png", "webp"}:
+        warnings.append(
+            WarningItem(
+                code="content_type_mismatch",
+                message=f"extension {suffix} does not match detected content type {detected}; treating as unsupported",
+            )
+        )
+        is_zip_by_ext = False
+    if is_zip_by_magic and not is_zip_by_ext:
+        warnings.append(
+            WarningItem(
+                code="content_type_detected",
+                message=f"detected ZIP by magic bytes; sanitizing as ZIP (extension {suffix or '<none>'})",
+            )
+        )
+
     try:
-        if suffix in OFFICE_OOXML_EXTS:
-            warnings.extend(_scan_office_macro_indicators_path(input_path))
+        if is_office:
+            warnings.extend(
+                _scan_office_macro_indicators_path(
+                    input_path, assume_ooxml=(detected == "zip" and suffix not in OFFICE_OOXML_EXTS)
+                )
+            )
             if options.risky_policy == "block" and _has_risky_findings(warnings):
                 warnings.append(_policy_blocked_warning())
                 return ReportItem(
@@ -431,7 +494,7 @@ def _sanitize_file(input_path: Path, output_path: Path, *, options: SanitizeOpti
                 )
             _sanitize_image(input_path, output_path)
             return ReportItem(str(input_path), str(output_path), "image_sanitized", warnings)
-        if suffix in PDF_EXTS:
+        if is_pdf_by_ext or is_pdf_by_magic:
             if options.dry_run:
                 warnings.extend(_scan_pdf_warnings(input_path))
                 if options.risky_policy == "block" and _has_risky_findings(warnings):
@@ -440,7 +503,7 @@ def _sanitize_file(input_path: Path, output_path: Path, *, options: SanitizeOpti
                 return ReportItem(str(input_path), str(output_path), "would_pdf_sanitize", warnings)
             warnings.extend(_sanitize_pdf(input_path, output_path, options=options))
             return ReportItem(str(input_path), str(output_path), "pdf_sanitized", warnings)
-        if suffix in ZIP_EXTS:
+        if is_zip_by_ext or is_zip_by_magic:
             if options.dry_run:
                 warnings.extend(_scan_zip_warnings(input_path, options=options))
                 if options.risky_policy == "block" and _has_risky_findings(warnings):
@@ -483,6 +546,45 @@ def _sanitize_file(input_path: Path, output_path: Path, *, options: SanitizeOpti
         return ReportItem(str(input_path), None, "blocked", blocked_warnings)
     except Exception as exc:  # noqa: BLE001
         return ReportItem(str(input_path), str(output_path), "error", warnings, error=str(exc))
+
+
+def _sniff_magic_path(path: Path) -> str | None:
+    try:
+        with path.open("rb") as fh:
+            head = fh.read(16)
+    except Exception:  # noqa: BLE001
+        return None
+    return _sniff_magic_bytes(head)
+
+
+def _sniff_magic_bytes(head: bytes) -> str | None:
+    if head.startswith(b"%PDF-"):
+        return "pdf"
+    if head[:4] in {b"PK\x03\x04", b"PK\x05\x06", b"PK\x07\x08"}:
+        return "zip"
+    if head.startswith(b"\xff\xd8\xff"):
+        return "jpeg"
+    if head.startswith(b"\x89PNG\r\n\x1a\n"):
+        return "png"
+    if len(head) >= 12 and head[:4] == b"RIFF" and head[8:12] == b"WEBP":
+        return "webp"
+    return None
+
+
+def _zip_looks_like_ooxml(path: Path) -> bool:
+    try:
+        with zipfile.ZipFile(path, "r") as zf:
+            names = set(zf.namelist())
+    except Exception:  # noqa: BLE001
+        return False
+
+    if "[Content_Types].xml" not in names:
+        return False
+
+    for prefix in ("word/", "xl/", "ppt/"):
+        if any(name.startswith(prefix) for name in names):
+            return True
+    return False
 
 
 def _sanitize_image(input_path: Path, output_path: Path) -> None:

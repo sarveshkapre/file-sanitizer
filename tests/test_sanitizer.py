@@ -213,6 +213,7 @@ def test_skip_unsupported_when_configured(tmp_path: Path) -> None:
 
 def _make_ooxml_like_zip(path: Path, *, with_vba_project: bool) -> None:
     with zipfile.ZipFile(path, "w") as zf:
+        zf.writestr("[Content_Types].xml", "<Types/>")
         zf.writestr("word/document.xml", "<w:document/>")
         if with_vba_project:
             zf.writestr("word/vbaProject.bin", b"not-a-real-vba")
@@ -246,6 +247,75 @@ def test_office_docx_with_vbaproject_warns(tmp_path: Path) -> None:
     assert (out_dir / "has-macro.docx").exists()
     item = json.loads(report.read_text(encoding="utf-8").strip())
     codes = {w["code"] for w in item["warnings"]}
+    assert "office_macro_indicator_vbaproject" in codes
+
+
+def test_content_type_sniffing_sanitizes_pdf_even_with_wrong_extension(tmp_path: Path) -> None:
+    pdf_path = tmp_path / "not-a-pdf-extension.txt"
+    writer = PdfWriter()
+    writer.add_blank_page(width=72, height=72)
+    with pdf_path.open("wb") as fh:
+        writer.write(fh)
+
+    out_dir = tmp_path / "out"
+    report = tmp_path / "report.jsonl"
+    rc = sanitize_path(pdf_path, out_dir, report)
+    assert rc == 0
+    assert (out_dir / "not-a-pdf-extension.txt").exists()
+
+    item = json.loads(report.read_text(encoding="utf-8").strip())
+    assert item["action"] == "pdf_sanitized"
+    codes = {w["code"] for w in item["warnings"]}
+    assert "content_type_detected" in codes
+
+
+def test_content_type_sniffing_avoids_parsing_non_pdf_with_pdf_extension(tmp_path: Path) -> None:
+    fake_pdf = tmp_path / "fake.pdf"
+    fake_pdf.write_text("not really a pdf", encoding="utf-8")
+
+    out_dir = tmp_path / "out"
+    report = tmp_path / "report.jsonl"
+    rc = sanitize_path(fake_pdf, out_dir, report)
+    assert rc == 0
+    assert (out_dir / "fake.pdf").exists()
+
+    item = json.loads(report.read_text(encoding="utf-8").strip())
+    assert item["action"] == "copied"
+    codes = {w["code"] for w in item["warnings"]}
+    assert "content_type_mismatch" in codes
+
+
+def test_content_type_sniffing_sanitizes_zip_even_with_wrong_extension(tmp_path: Path) -> None:
+    disguised = tmp_path / "bundle.dat"
+    with zipfile.ZipFile(disguised, "w") as zf:
+        zf.writestr("docs/note.txt", "hello")
+
+    out_dir = tmp_path / "out"
+    report = tmp_path / "report.jsonl"
+    rc = sanitize_path(disguised, out_dir, report)
+    assert rc == 0
+    assert (out_dir / "bundle.dat").exists()
+
+    item = json.loads(report.read_text(encoding="utf-8").strip())
+    assert item["action"] == "zip_sanitized"
+    codes = {w["code"] for w in item["warnings"]}
+    assert "content_type_detected" in codes
+
+
+def test_content_type_sniffing_detects_ooxml_inside_zip_container(tmp_path: Path) -> None:
+    disguised = tmp_path / "macro.bin"
+    _make_ooxml_like_zip(disguised, with_vba_project=True)
+
+    out_dir = tmp_path / "out"
+    report = tmp_path / "report.jsonl"
+    rc = sanitize_path(disguised, out_dir, report)
+    assert rc == 0
+    assert (out_dir / "macro.bin").exists()
+
+    item = json.loads(report.read_text(encoding="utf-8").strip())
+    assert item["action"] == "copied"
+    codes = {w["code"] for w in item["warnings"]}
+    assert "content_type_detected_ooxml" in codes
     assert "office_macro_indicator_vbaproject" in codes
 
 
