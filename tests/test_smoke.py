@@ -5,6 +5,7 @@ import os
 import subprocess
 import sys
 import zipfile
+from datetime import datetime
 from pathlib import Path
 
 
@@ -52,6 +53,12 @@ def test_cli_report_summary(tmp_path: Path) -> None:
     assert summary["dry_run"] is True
     assert "warnings" in summary
     assert "errors" in summary
+    assert "tool_version" in summary
+    assert "options" in summary
+    assert "started_at" in summary
+    assert "ended_at" in summary
+    datetime.fromisoformat(summary["started_at"])
+    datetime.fromisoformat(summary["ended_at"])
 
 
 def test_cli_report_stdout_dash_writes_to_stdout_and_does_not_create_dash_file(
@@ -92,6 +99,38 @@ def test_cli_report_stdout_dash_writes_to_stdout_and_does_not_create_dash_file(
     assert summary["type"] == "summary"
     assert summary["dry_run"] is True
     assert "wrote report to stdout" in proc.stderr
+    assert "tool_version" in summary
+
+
+def test_cli_quiet_suppresses_stderr_summary(tmp_path: Path) -> None:
+    input_dir = tmp_path / "in"
+    input_dir.mkdir()
+    (input_dir / "a.txt").write_text("hello", encoding="utf-8")
+
+    out_dir = tmp_path / "out"
+    proc = subprocess.run(
+        [
+            sys.executable,
+            "-m",
+            "file_sanitizer",
+            "sanitize",
+            "--input",
+            str(input_dir),
+            "--out",
+            str(out_dir),
+            "--report",
+            "-",
+            "--dry-run",
+            "--quiet",
+        ],
+        check=False,
+        capture_output=True,
+        text=True,
+        cwd=tmp_path,
+    )
+    assert proc.returncode == 0
+    assert proc.stderr.strip() == ""
+    assert proc.stdout.strip() != ""
 
 
 def test_cli_fail_on_warnings_sets_nonzero_exit(tmp_path: Path) -> None:

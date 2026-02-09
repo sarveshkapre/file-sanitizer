@@ -11,6 +11,7 @@
 - Add optional report summary record (`--report-summary`).
 - Support writing the JSONL report to stdout (`--report -`) for piping/automation.
 - Add `--fail-on-warnings` (CI-friendly non-zero exit on warnings).
+- Add `--quiet` to suppress human-readable stderr summary output.
 - Add warning taxonomy (`code` + `message`) in JSONL report warnings for machine-actionable policy decisions.
 - Add Office macro detection warnings for OOXML macro-enabled documents and `vbaProject.bin` indicators.
 - Add `--risky-policy` (`warn` vs `block`) to optionally block writing outputs for risky PDF/ZIP/Office findings.

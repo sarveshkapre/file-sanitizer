@@ -4,6 +4,7 @@ import argparse
 import json
 import sys
 from collections import Counter
+from datetime import datetime, timezone
 from pathlib import Path
 
 from .sanitizer import (
@@ -64,6 +65,11 @@ def main(argv: list[str] | None = None) -> int:
         "--fail-on-warnings",
         action="store_true",
         help="Exit non-zero if any warnings are emitted (useful for CI)",
+    )
+    p_run.add_argument(
+        "--quiet",
+        action="store_true",
+        help="Suppress human-readable stderr summary output (useful when piping)",
     )
     p_run.add_argument(
         "--exclude",
@@ -152,9 +158,11 @@ def main(argv: list[str] | None = None) -> int:
 
 
 def _run(args: argparse.Namespace) -> int:
+    started_at = datetime.now(timezone.utc)
     out_dir = Path(args.out)
     report = Path(args.report) if args.report is not None else (out_dir / "sanitize-report.jsonl")
     report_to_stdout = str(report) == "-"
+    quiet = bool(args.quiet)
 
     counts: Counter[str] = Counter()
     warning_count = 0
@@ -194,19 +202,21 @@ def _run(args: argparse.Namespace) -> int:
 
     if rc == 0 and args.fail_on_warnings and warning_count > 0:
         rc = 3
+    ended_at = datetime.now(timezone.utc)
 
     total = sum(counts.values())
-    if args.dry_run:
-        print("dry-run complete", file=sys.stderr)
-    if report_to_stdout:
-        print("wrote report to stdout", file=sys.stderr)
-    else:
-        print(f"wrote {report}", file=sys.stderr)
-    print(f"files: {total}", file=sys.stderr)
-    print(f"warnings: {warning_count}", file=sys.stderr)
-    print(f"errors: {error_count}", file=sys.stderr)
-    for action, n in sorted(counts.items()):
-        print(f"  {action}: {n}", file=sys.stderr)
+    if not quiet:
+        if args.dry_run:
+            print("dry-run complete", file=sys.stderr)
+        if report_to_stdout:
+            print("wrote report to stdout", file=sys.stderr)
+        else:
+            print(f"wrote {report}", file=sys.stderr)
+        print(f"files: {total}", file=sys.stderr)
+        print(f"warnings: {warning_count}", file=sys.stderr)
+        print(f"errors: {error_count}", file=sys.stderr)
+        for action, n in sorted(counts.items()):
+            print(f"  {action}: {n}", file=sys.stderr)
 
     if args.report_summary:
         summary = {
@@ -218,6 +228,33 @@ def _run(args: argparse.Namespace) -> int:
             "warnings": int(warning_count),
             "errors": int(error_count),
             "counts": dict(sorted(counts.items())),
+            # Extra run context for ingestion/debugging. These are additive and do not
+            # change the required schema fields.
+            "tool_version": get_version(),
+            "started_at": started_at.isoformat(),
+            "ended_at": ended_at.isoformat(),
+            "duration_ms": int((ended_at - started_at).total_seconds() * 1000),
+            "input": str(args.input),
+            "out": str(out_dir),
+            "report": "-" if report_to_stdout else str(report),
+            "options": {
+                "flat": bool(args.flat),
+                "overwrite": bool(args.overwrite),
+                "copy_unsupported": bool(args.copy_unsupported),
+                "dry_run": bool(args.dry_run),
+                "fail_on_warnings": bool(args.fail_on_warnings),
+                "quiet": bool(args.quiet),
+                "exclude": list(args.exclude),
+                "allow_ext": list(args.allow_ext),
+                "max_files": None if args.max_files is None else int(args.max_files),
+                "max_bytes": None if args.max_bytes is None else int(args.max_bytes),
+                "zip_max_members": int(args.zip_max_members),
+                "zip_max_member_bytes": int(args.zip_max_member_bytes),
+                "zip_max_total_bytes": int(args.zip_max_total_bytes),
+                "zip_max_compression_ratio": float(args.zip_max_compression_ratio),
+                "nested_archive_policy": str(args.nested_archive_policy),
+                "risky_policy": str(args.risky_policy),
+            },
         }
         if report_to_stdout:
             sys.stdout.write(json.dumps(summary) + "\n")

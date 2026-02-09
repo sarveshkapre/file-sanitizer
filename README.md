@@ -50,6 +50,9 @@ file-sanitizer sanitize --input ./files --out ./sanitized --report-summary
 # Write the JSONL report to stdout (useful for piping)
 file-sanitizer sanitize --input ./files --out ./sanitized --report - --dry-run --report-summary
 
+# Suppress human-readable stderr summary output (useful when piping in strict environments)
+file-sanitizer sanitize --input ./files --out ./sanitized --report - --dry-run --quiet
+
 # Exit non-zero if any warnings are emitted (useful for CI policy)
 file-sanitizer sanitize --input ./files --out ./sanitized --dry-run --fail-on-warnings
 

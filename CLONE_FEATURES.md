@@ -8,13 +8,19 @@
 
 ## Candidate Features To Do
 - [ ] P1 (impact: med, effort: med, strategic fit: high, diff: low, risk: low, confidence: med): Add benchmark/regression coverage for large directory and ZIP inputs (track runtime and memory) in a CI-friendly way.
-- [ ] P2 (impact: med, effort: med, strategic fit: med, diff: med, risk: low, confidence: med): Add `--quiet` to suppress stderr summary lines (useful when piping `--report -` into tools).
-- [ ] P2 (impact: med, effort: med, strategic fit: med, diff: med, risk: med, confidence: med): Add run-level metadata record (input type, options snapshot, started_at/ended_at) as an optional first JSONL line.
+- [ ] P2 (impact: med, effort: med, strategic fit: med, diff: med, risk: med, confidence: med): Add a run-level metadata record (input type, options snapshot, started_at/ended_at) as an optional first JSONL line (distinct from the summary record).
 - [ ] P2 (impact: med, effort: high, strategic fit: high, diff: med, risk: med, confidence: med): Add optional recursive nested-archive sanitization with a depth budget and expanded-bytes budget.
 - [ ] P2 (impact: med, effort: med, strategic fit: med, diff: low, risk: low, confidence: low): Expand image support beyond JPEG/PNG/WebP/TIFF (HEIC) behind an optional extra dependency (do not bloat base install).
-- [ ] P2 (impact: low, effort: low, strategic fit: med, diff: low, risk: low, confidence: med): Document a stable mapping of warning codes to “recommended policy actions” (consumer guidance).
 
 ## Implemented
+- [x] 2026-02-09: Harden ZIP member reading with bounded streaming read limits to reduce zip-bomb/DoS risk (enforces uncompressed-byte caps while reading, not just via ZIP headers).
+  Evidence: `src/file_sanitizer/sanitizer.py`, `make check`.
+- [x] 2026-02-09: Add `--quiet` to suppress human-readable stderr summaries (clean piping with `--report -`).
+  Evidence: `src/file_sanitizer/cli.py`, `README.md`, `tests/test_smoke.py`, `make check`.
+- [x] 2026-02-09: Extend the optional JSONL summary record with run context (tool version, timestamps, duration, and options snapshot).
+  Evidence: `src/file_sanitizer/cli.py`, `docs/report.md`, `tests/test_smoke.py`, `make check`.
+- [x] 2026-02-09: Document recommended consumer policy actions for warning-code categories.
+  Evidence: `docs/report.md`.
 - [x] 2026-02-09: Add a lightweight local benchmark harness (not in CI) for large directory and ZIP inputs.
   Evidence: `scripts/bench_sanitize.py`, `README.md`.
 - [x] 2026-02-09: Add TIFF image sanitization support (`.tif/.tiff`).
@@ -87,6 +93,8 @@
 - Market scan notes (2026-02-09, Cycle 3): Dangerzone’s core value prop is “safe export” via sandboxed render-to-pixels then rebuild-to-PDF; this is a distinct category from metadata stripping and sets user expectations for handling untrusted documents. https://dangerzone.rocks/
 - Market scan notes (2026-02-09, Cycle 3): qpdf documents deterministic/static ID flags for reproducible output in tests; “deterministic output” is a common expectation for automation pipelines. https://qpdf.readthedocs.io/
 - Market scan notes (2026-02-09, Cycle 3): ExifTool’s official docs emphasize broad metadata read/write coverage; “strip metadata” workflows typically combine deterministic CLI flags with policy about what to retain. https://exiftool.org/exiftool_pod2.html
+- Market scan notes (2026-02-09): pdfcpu advertises an explicit `sanitize` operation for PDFs; baseline expectation: PDF toolchains often have a dedicated sanitize step beyond metadata removal. https://pdfcpu.io/
+- Market scan notes (2026-02-09): ocrmypdf documents `--quiet` usage; baseline expectation: automation CLIs need a way to suppress non-essential stderr output when piping. https://ocrmypdf.readthedocs.io/en/latest/cookbook.html
 
 ## Notes
 - This file is maintained by the autonomous clone loop.

@@ -58,9 +58,31 @@ If you pass `--report-summary`, the CLI appends one final record:
 - `errors` (int)
 - `counts` (object): action counts (string -> int)
 
+Additional run-context fields may be present for ingestion/debugging:
+
+- `tool_version` (string)
+- `started_at` / `ended_at` (string, ISO 8601)
+- `duration_ms` (int)
+- `input` / `out` / `report` (string)
+- `options` (object): CLI option snapshot
+
 ## Warning Codes
 
 Warning codes are intended to be stable; new codes may be added over time.
+
+### Recommended Policy Actions (Consumer Guidance)
+
+This tool is primarily a metadata sanitizer; it also surfaces "risky" signals so downstream systems can
+make trust decisions. Suggested handling by category:
+
+- `pdf_risk_*`, `pdf_scan_failed`: treat as risky; consider `--risky-policy block` and/or a safer export workflow.
+- `office_macro_*`, `office_ooxml_scan_failed`: treat as risky; macros are not removed, so consider blocking or quarantining.
+- `zip_*`: treat as risky; indicates unsafe members, guardrail skips, nested-archive findings, or read/sanitize failures.
+- `content_type_mismatch`, `content_type_detected_ooxml`: treat as suspicious on untrusted drops (extension spoofing).
+- `allowlist_skipped`, `excluded_by_pattern`, `unsupported_*`, `symlink_skipped`, `output_exists`, `traversal_limit_reached`:
+  informational; usually not security-critical, but may be policy-relevant depending on your pipeline.
+
+Implementation note: `--risky-policy block` blocks output writes when any "risky" findings are present.
 
 Common categories:
 
