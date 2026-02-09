@@ -2,6 +2,22 @@
 
 ## Decision Log
 
+### 2026-02-09 - Exclude traversal pruning and allowlist mode (`--allow-ext`)
+- Decision: When an `--exclude` glob matches a directory during traversal, prune it (do not walk into it) and emit a single `action=excluded` record for that directory.
+- Decision: Add allowlist mode via `--allow-ext` (repeatable); when set, non-allowlisted files are skipped, and for `.zip` inputs the allowlist is applied to ZIP members.
+- Why: Exclude pruning avoids wasting time walking large ignored trees (ex: `.git`, `node_modules`) and reduces report noise; allowlist mode lets users enforce “only export these types” policies for untrusted drops.
+- Evidence:
+  - Code: `src/file_sanitizer/sanitizer.py`, `src/file_sanitizer/cli.py`
+  - Docs: `README.md`, `docs/report.md`, `UPDATE.md`
+  - Tests: `tests/test_sanitizer.py`
+  - Verification: `make check` (pass, `45 passed`)
+  - Smoke: `.venv/bin/python -m file_sanitizer sanitize --input tests/fixtures/mixed-bundle.zip --out "$tmpdir/out" --report "$tmpdir/report.jsonl" --allow-ext .jpg --report-summary` (pass; output ZIP contains only allowlisted members; report includes `allowlist_skipped` warnings for dropped members)
+- Commits:
+  - Exclude traversal pruning: `acd69e79c46ab9c6779bc883eb992c0739b16643`
+  - Allowlist mode (`--allow-ext`): `a28783f63d8e34bf3364a565b770db05e68f78fd`
+- Confidence: High
+- Trust label: verified-local
+
 ### 2026-02-09 - Report contract v1, content-type sniffing, and traversal guardrails
 - Decision: Add `report_version` to every JSONL record and the optional CLI summary record; publish a stable report contract doc and an optional JSON Schema (per JSONL line).
 - Decision: Add magic-bytes content-type sniffing to reduce extension spoofing (sanitize PDFs/ZIPs even when renamed) and avoid hard parser failures for invalid `.pdf` inputs (warn + treat as unsupported).
@@ -64,4 +80,3 @@
 ## Open Follow-ups
 - Add performance benchmark coverage for large ZIP and directory workloads.
 - Add optional recursive nested-archive sanitization with a depth budget.
-- Prune excluded directories during traversal for performance (avoid walking into `.git`, `node_modules`, etc).

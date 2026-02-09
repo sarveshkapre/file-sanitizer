@@ -1,3 +1,19 @@
+# Update (2026-02-09, Cycle 3)
+
+## Shipped
+
+- Prune excluded directories during traversal for performance; emits a single `action=excluded` record for the directory instead of traversing all children.
+- Add allowlist mode (`--allow-ext`, repeatable) to skip non-allowlisted files by default (applies to ZIP members for `.zip` inputs).
+
+## Verification
+
+```bash
+make check
+.venv/bin/python -m file_sanitizer sanitize --input tests/fixtures/mixed-bundle.zip --out "$tmpdir/out" --report "$tmpdir/report.jsonl" --allow-ext .jpg --report-summary
+```
+
+---
+
 # Update (2026-02-09, Cycle 2)
 
 ## Shipped
