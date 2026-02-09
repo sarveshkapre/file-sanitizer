@@ -49,8 +49,20 @@ file-sanitizer sanitize --input ./files --out ./sanitized --dry-run --fail-on-wa
 
 # Sanitize a ZIP archive in place (supported members are re-written)
 file-sanitizer sanitize --input ./drop/batch.zip --out ./sanitized
+
+# Tighten ZIP bomb guardrails for untrusted drops
+file-sanitizer sanitize --input ./drop/batch.zip --out ./sanitized \
+  --zip-max-members 2000 \
+  --zip-max-member-bytes 33554432 \
+  --zip-max-total-bytes 268435456 \
+  --zip-max-compression-ratio 80
+
+# Keep nested ZIP members instead of skipping them (default is skip)
+file-sanitizer sanitize --input ./drop/batch.zip --out ./sanitized --nested-archive-policy copy
 ```
 
 Notes:
 - ZIP handling skips unsafe members (for example path traversal paths or symlinks) and reports warnings.
+- ZIP guardrails skip entries that exceed configured limits (entry count, per-entry size, total expanded bytes, compression ratio).
+- Nested ZIP members are skipped by default (use `--nested-archive-policy copy` to preserve them as-is).
 - Unsupported ZIP members are copied as-is by default (use `--no-copy-unsupported` to skip them).

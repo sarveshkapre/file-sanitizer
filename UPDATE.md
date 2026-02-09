@@ -1,3 +1,28 @@
+# Update (2026-02-09, Cycle 2)
+
+## Shipped
+
+- Added ZIP bomb guardrails for archive sanitization: entry-count limit, per-member expanded-size limit, total expanded-size limit, and compression-ratio limit.
+- Added nested ZIP handling policy with secure default behavior (`--nested-archive-policy skip`, optional `copy`).
+- Added CLI controls for ZIP safety tuning: `--zip-max-members`, `--zip-max-member-bytes`, `--zip-max-total-bytes`, `--zip-max-compression-ratio`.
+- Expanded regression coverage for ZIP guardrails (count/size/ratio limits, nested policy, dry-run parity, option validation).
+
+## Notes
+
+- Guardrail checks are applied before member decompression whenever possible to reduce zip-bomb exposure.
+- Dry-run ZIP analysis uses the same guardrail path as write mode for consistent warnings.
+
+## Verification
+
+```bash
+make check
+.venv/bin/python -m file_sanitizer sanitize --input "$tmpdir/input.zip" --out "$tmpdir/out" --report "$tmpdir/report.jsonl" --report-summary
+.venv/bin/python -m file_sanitizer sanitize --input "$tmpdir/input.zip" --out "$tmpdir/out2" --report "$tmpdir/report2.jsonl" --dry-run --fail-on-warnings
+.venv/bin/python -m file_sanitizer sanitize --input "$tmpdir/outer.zip" --out "$tmpdir/out3" --report "$tmpdir/report3.jsonl" --nested-archive-policy copy --zip-max-members 10 --zip-max-member-bytes 1024 --zip-max-total-bytes 4096 --zip-max-compression-ratio 200
+```
+
+---
+
 # Update (2026-02-09)
 
 ## Shipped

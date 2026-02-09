@@ -7,12 +7,25 @@
 - Gaps found during codebase exploration
 
 ## Candidate Features To Do
-- [ ] P0: Add Office document macro detection (`.docm/.xlsm/.pptm`) with clear warning taxonomy in the JSONL report.
-- [ ] P0: Add nested-archive guardrails (depth/expanded-size/member-count limits) to reduce zip-bomb risk.
-- [ ] P1: Add policy mode for risky content (`warn` vs `block`) for PDF/ZIP active-content findings.
-- [ ] P1: Add perf/regression benchmark job for large directory + large ZIP runs.
+- [ ] P0: Add Office macro detection warnings for `.docm/.xlsm/.pptm` and OOXML macro indicators in copied files/ZIP members.
+- [ ] P1: Add risky-content policy mode (`warn` vs `block`) for PDF and ZIP findings.
+- [ ] P1: Add warning taxonomy to report records (`code` + `message`) for machine-actionable policy handling.
+- [ ] P1: Add benchmark/regression job for large directory and large ZIP inputs.
+- [ ] P2: Add optional recursive nested-archive sanitization mode with depth budget.
 
 ## Implemented
+- [x] 2026-02-09: Added ZIP bomb guardrails for ZIP inputs (entry-count, per-member expanded-size, total expanded-size, compression-ratio checks).
+  Evidence: `src/file_sanitizer/sanitizer.py`, `tests/test_sanitizer.py`.
+- [x] 2026-02-09: Added nested ZIP member policy with secure default skip and optional copy mode.
+  Evidence: `src/file_sanitizer/sanitizer.py`, `src/file_sanitizer/cli.py`, `tests/test_sanitizer.py`.
+- [x] 2026-02-09: Exposed configurable archive guardrail flags in CLI (`--zip-max-*`, `--nested-archive-policy`).
+  Evidence: `src/file_sanitizer/cli.py`, `README.md`.
+- [x] 2026-02-09: Added regression tests for guardrails and option validation (member limits/size/ratio/total-size/nested-policy/dry-run parity).
+  Evidence: `tests/test_sanitizer.py`.
+- [x] 2026-02-09: Updated docs and trackers to align with current ZIP safety behavior.
+  Evidence: `README.md`, `ROADMAP.md`, `PLAN.md`, `CHANGELOG.md`, `UPDATE.md`, `CLONE_FEATURES.md`.
+- [x] 2026-02-09: Added structured project memory artifacts for decisions and incidents.
+  Evidence: `PROJECT_MEMORY.md`, `INCIDENTS.md`.
 - [x] 2026-02-09: Added ZIP archive sanitization support for `.zip` inputs.
   Evidence: `src/file_sanitizer/sanitizer.py`, `tests/test_sanitizer.py`.
 - [x] 2026-02-09: Hardened ZIP member handling for unsafe paths, symlinks, encrypted members, and duplicates (warning + skip).
@@ -25,14 +38,17 @@
   Evidence: `README.md`, `PLAN.md`, `ROADMAP.md`, `CHANGELOG.md`, `UPDATE.md`.
 - [x] 2026-02-09: Verification evidence captured.
   Commands:
-  - `make check` -> pass (`21 passed`, mypy/ruff/build clean).
+  - `make check` -> pass (`29 passed`, mypy/ruff/build clean).
   - `.venv/bin/python -m file_sanitizer sanitize --input tests/fixtures/mixed-bundle.zip --out "$tmpdir/out" --report "$tmpdir/report.jsonl" --report-summary` -> pass (`rc=0`, `zip_sanitized: 1`, output ZIP entries: `docs/readme.txt`, `images/exif-photo.jpg`, `pdfs/risky.pdf`).
   - `.venv/bin/python -m file_sanitizer sanitize --input tests/fixtures/mixed-bundle.zip --out "$tmpdir/out" --report "$tmpdir/report.jsonl" --dry-run --fail-on-warnings` -> expected strict failure (`rc=3`, `would_zip_sanitize: 1`).
+  - `.venv/bin/python -m file_sanitizer sanitize --input "$tmpdir/outer.zip" --out "$tmpdir/out" --report "$tmpdir/report.jsonl" --nested-archive-policy copy --zip-max-members 10 --zip-max-member-bytes 1024 --zip-max-total-bytes 4096 --zip-max-compression-ratio 200` -> pass (`rc=0`, output ZIP entries include `docs/note.txt`, `nested/inner.zip`).
 
 ## Insights
 - Deterministic iteration improves CI reproducibility and reduces flaky report diffs.
 - ZIP sanitization is only as safe as member policy; warning+skip for unsafe members is required even in metadata-focused tools.
 - Fixture-backed binary tests catch parser/serialization regressions that synthetic-only tests may miss.
+- ZIP safety controls are most useful when enforced pre-decompression (metadata checks) with deterministic warning output.
+- Nested archive handling should be explicit policy, not implicit pass-through.
 
 ## Notes
 - This file is maintained by the autonomous clone loop.

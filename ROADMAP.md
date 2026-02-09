@@ -7,5 +7,6 @@
 ## Next
 
 - Office document macro detection.
-- Nested archive policy and zip-bomb safeguards.
 - Trust policy mode (`warn` vs `block`) for risky PDF/ZIP findings.
+- Warning taxonomy (`code` + `message`) for machine-actionable policy decisions.
+- Performance benchmark coverage for very large directory and ZIP inputs.
