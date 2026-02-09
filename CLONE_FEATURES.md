@@ -7,11 +7,16 @@
 - Gaps found during codebase exploration
 
 ## Candidate Features To Do
-- [ ] P0: Add Office macro detection warnings for `.docm/.xlsm/.pptm` and OOXML macro indicators in copied files/ZIP members.
-- [ ] P1: Add risky-content policy mode (`warn` vs `block`) for PDF and ZIP findings.
-- [ ] P1: Add warning taxonomy to report records (`code` + `message`) for machine-actionable policy handling.
+- [ ] P0 (selected): Add warning taxonomy to report records (`code` + `message`) so policies can be automated safely.
+- [ ] P0 (selected): Add Office macro detection warnings for `.docm/.xlsm/.pptm` plus OOXML macro indicators (ex: `vbaProject.bin`) for local files and ZIP members.
+- [ ] P1 (selected): Add risky-content policy mode (`warn` vs `block`) for risky PDF/ZIP/Office findings (block outputs when configured, with explicit report action).
+- [ ] P1: Add content-type sniffing (magic bytes) to reduce reliance on file extensions for sanitizer selection and reporting.
+- [ ] P1: Document report schema + warning codes as a stable contract (and optionally publish a JSON Schema).
+- [ ] P1: Add `--report-version` (or similar) to support forward report evolution without breaking downstream ingestion.
 - [ ] P1: Add benchmark/regression job for large directory and large ZIP inputs.
 - [ ] P2: Add optional recursive nested-archive sanitization mode with depth budget.
+- [ ] P2: Add optional allowlist mode (only export sanitized outputs for a set of extensions; skip everything else by default).
+- [ ] P2: Add `--max-files` / `--max-bytes` traversal guardrails for very large directory inputs.
 
 ## Implemented
 - [x] 2026-02-09: Added ZIP bomb guardrails for ZIP inputs (entry-count, per-member expanded-size, total expanded-size, compression-ratio checks).
@@ -49,6 +54,11 @@
 - Fixture-backed binary tests catch parser/serialization regressions that synthetic-only tests may miss.
 - ZIP safety controls are most useful when enforced pre-decompression (metadata checks) with deterministic warning output.
 - Nested archive handling should be explicit policy, not implicit pass-through.
+- Market scan notes (2026-02-09): MAT2 is a general-purpose metadata removal CLI; baseline expectation: multi-format support + automation-friendly usage. https://0xacab.org/jvoisin/mat2
+- Market scan notes (2026-02-09): ExifTool is the de-facto standard for inspecting/removing metadata from many file types; baseline expectation: deterministic scripting and broad format support. https://exiftool.org/
+- Market scan notes (2026-02-09): qpdf supports removing/clearing PDF metadata and deterministic output; baseline expectation: PDF metadata removal should be scriptable. https://qpdf.readthedocs.io/en/stable/cli.html
+- Market scan notes (2026-02-09): Dangerzone uses render-to-safe-output for risky documents; baseline expectation: users want a "safer export" story beyond metadata removal for untrusted docs. https://dangerzone.rocks/
+- Market scan notes (2026-02-09): OOXML macro signals are commonly detectable via `vbaProject.bin`; baseline expectation: macro-enabled formats should be surfaced as high-risk findings. https://arstdesign.com/articles/detecting-macros-in-ooxml-files.html
 
 ## Notes
 - This file is maintained by the autonomous clone loop.
