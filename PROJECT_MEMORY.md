@@ -19,6 +19,29 @@
   - Add warning taxonomy (`code` + `message`) for policy automation.
   - Add optional recursive nested sanitization with depth budget.
 
+### 2026-02-09 - Structured warning codes, Office macro signals, and risky-policy block mode
+- Decision: Switch JSONL report warnings from free-form strings to structured objects with `code` and `message`.
+- Decision: Add Office macro warnings for macro-enabled OOXML extensions and `vbaProject.bin` indicators, including within ZIP members.
+- Decision: Add `--risky-policy {warn,block}`; when set to `block`, skip writing outputs for risky PDFs and ZIPs (report action `blocked`).
+- Why: Makes findings machine-actionable, improves auditability, and lets users enforce trust gates without relying on brittle string matching.
+- Evidence:
+  - Code: `src/file_sanitizer/sanitizer.py`, `src/file_sanitizer/cli.py`
+  - Tests: `tests/test_sanitizer.py`, `tests/test_fixtures.py`, `tests/test_smoke.py`
+  - Verification: `make check` (pass, `35 passed`)
+  - Smoke: `.venv/bin/python -m file_sanitizer sanitize --input tests/fixtures/mixed-bundle.zip --out "$tmpdir/out" --report "$tmpdir/report.jsonl" --report-summary` (pass, `rc=0`, warnings are structured as `code` + `message`)
+  - Smoke: `.venv/bin/python -m file_sanitizer sanitize --input tests/fixtures/mixed-bundle.zip --out "$tmpdir/out" --report "$tmpdir/report.jsonl" --risky-policy block` (expected block, `rc=2`, `action=blocked`)
+- Commits:
+  - Structured warning objects: `75c50a4dcd1a8de77b5bf0eb84b6678404c6ae92`
+  - Office macro warnings: `2b81c82e5c1c8a3429c8cfe2ac0db85c746d1cc5`
+  - Risky-policy block mode: `dc6734107354418dba5955b4384a0d9793db59a3`
+- Confidence: High
+- Trust label: verified-local
+- Follow-ups:
+  - Document the report schema/warning codes as a stable contract (and optionally ship a JSON Schema).
+  - Add content-type sniffing to reduce extension-based misclassification.
+
 ## Open Follow-ups
-- Add risky-content policy mode (`warn` vs `block`) for PDF/ZIP findings.
+- Document the report schema/warning codes as a stable contract (and optionally ship a JSON Schema).
+- Add content-type sniffing to reduce extension-based misclassification.
 - Add performance benchmark coverage for large ZIP and directory workloads.
+- Add optional recursive nested-archive sanitization with a depth budget.

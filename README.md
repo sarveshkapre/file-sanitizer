@@ -47,6 +47,9 @@ file-sanitizer sanitize --input ./files --out ./sanitized --report-summary
 # Exit non-zero if any warnings are emitted (useful for CI policy)
 file-sanitizer sanitize --input ./files --out ./sanitized --dry-run --fail-on-warnings
 
+# Block writing outputs if risky findings are detected (PDF active content indicators, risky ZIP findings, Office macro signals)
+file-sanitizer sanitize --input ./files --out ./sanitized --risky-policy block
+
 # Sanitize a ZIP archive in place (supported members are re-written)
 file-sanitizer sanitize --input ./drop/batch.zip --out ./sanitized
 
@@ -66,3 +69,5 @@ Notes:
 - ZIP guardrails skip entries that exceed configured limits (entry count, per-entry size, total expanded bytes, compression ratio).
 - Nested ZIP members are skipped by default (use `--nested-archive-policy copy` to preserve them as-is).
 - Unsupported ZIP members are copied as-is by default (use `--no-copy-unsupported` to skip them).
+- Report warnings are structured objects with `code` and `message` for machine-actionable ingestion.
+- Office macro-enabled OOXML files (`.docm/.xlsm/.pptm` and templates) and OOXML macro indicators (ex: `vbaProject.bin`) are surfaced as warnings (macros are not removed).
