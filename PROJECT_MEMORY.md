@@ -2,6 +2,30 @@
 
 ## Decision Log
 
+### 2026-02-09 - Bound ZIP member reads to enforce uncompressed-byte limits during streaming read
+- Decision: Read ZIP members via a bounded streaming reader (hard cap) instead of `ZipFile.read()` to ensure uncompressed-byte guardrails hold even if ZIP headers lie about sizes.
+- Why: ZIP safety controls based only on declared metadata can be bypassed with malformed entries; bounding the actual read reduces zip-bomb/DoS risk on untrusted drops.
+- Evidence:
+  - Code: `src/file_sanitizer/sanitizer.py`
+  - Verification: `make check` (pass, `48 passed`)
+  - Smoke: `.venv/bin/python -m file_sanitizer sanitize --input tests/fixtures/mixed-bundle.zip --out "$tmpdir/out" --report "$tmpdir/report.jsonl" --report-summary` (pass, `rc=0`)
+- Commit: `3e2c6c1a50b0333c763a05f1141e69399b4dc647`
+- Confidence: High
+- Trust label: verified-local
+
+### 2026-02-09 - Quiet CLI mode and richer report summary run context
+- Decision: Add `--quiet` to suppress human-readable stderr summaries; extend the optional JSONL summary record with run context (timestamps, duration, tool version, and options snapshot).
+- Why: Many ingestion/pipeline environments require clean stdout/stderr separation; run metadata in the summary reduces troubleshooting and improves auditability without changing the required report fields.
+- Evidence:
+  - Code: `src/file_sanitizer/cli.py`
+  - Docs: `README.md`, `docs/report.md`, `CHANGELOG.md`
+  - Tests: `tests/test_smoke.py`
+  - Verification: `make check` (pass, `48 passed`)
+  - Smoke: `.venv/bin/python -m file_sanitizer sanitize --input tests/fixtures/mixed-bundle.zip --out "$tmpdir/out" --report - --dry-run --quiet` (pass, `rc=0`, `stderr_len=0`)
+- Commit: `a5750d1bddc0947a5a7a3d24d3c7b4b53534d75f`
+- Confidence: High
+- Trust label: verified-local
+
 ### 2026-02-09 - Stdout JSONL reports (`--report -`) and report-summary to stdout
 - Decision: Support writing the JSONL report to stdout via `--report -` and ensure `--report-summary` appends the summary record to stdout in this mode (stderr summary remains for humans/CI logs).
 - Why: Enables piping into jq/ingestion systems without managing a report file path and prevents accidental creation of a literal `./-` file.
