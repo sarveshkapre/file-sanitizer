@@ -42,6 +42,9 @@ DEFAULT_ZIP_MAX_COMPRESSION_RATIO = 100.0
 NESTED_ARCHIVE_POLICIES = {"skip", "copy"}
 RISKY_POLICIES = {"warn", "block"}
 
+# JSONL report schema version (bump on backward-incompatible schema changes).
+REPORT_VERSION = 1
+
 
 @dataclass(frozen=True)
 class SanitizeOptions:
@@ -86,6 +89,7 @@ class ReportItem:
 
     def to_dict(self) -> dict[str, Any]:
         return {
+            "report_version": REPORT_VERSION,
             "input_path": self.input_path,
             "output_path": self.output_path,
             "action": self.action,

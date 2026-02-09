@@ -21,6 +21,9 @@
 - Add ZIP bomb guardrails with configurable limits (`--zip-max-members`, `--zip-max-member-bytes`, `--zip-max-total-bytes`, `--zip-max-compression-ratio`).
 - Add nested ZIP handling policy (`--nested-archive-policy` with secure default `skip`).
 - Add committed regression fixtures under `tests/fixtures/` for EXIF image, risky PDF, and mixed ZIP.
+- Add directory traversal guardrails for large inputs (`--max-files`, `--max-bytes`) and streaming deterministic directory walking.
+- Add magic-bytes content-type sniffing to reduce extension spoofing (with OOXML heuristics to avoid treating Office docs as raw ZIPs).
+- Add `report_version` field to report records and publish report schema documentation under `docs/report.md`.
 
 ## v0.1.0 - 2026-01-31
 

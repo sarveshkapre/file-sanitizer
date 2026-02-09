@@ -12,6 +12,7 @@ from .sanitizer import (
     DEFAULT_ZIP_MAX_MEMBERS,
     DEFAULT_ZIP_MAX_TOTAL_UNCOMPRESSED_BYTES,
     NESTED_ARCHIVE_POLICIES,
+    REPORT_VERSION,
     RISKY_POLICIES,
     SanitizeOptions,
     sanitize_path,
@@ -195,6 +196,7 @@ def _run(args: argparse.Namespace) -> int:
     if args.report_summary:
         summary = {
             "type": "summary",
+            "report_version": REPORT_VERSION,
             "dry_run": bool(args.dry_run),
             "exit_code": int(rc),
             "files": int(total),

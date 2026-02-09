@@ -11,7 +11,7 @@ from PIL import Image
 from pypdf import PdfReader, PdfWriter
 from pypdf.generic import DictionaryObject, NameObject, TextStringObject
 
-from file_sanitizer.sanitizer import SanitizeOptions, sanitize_path
+from file_sanitizer.sanitizer import REPORT_VERSION, SanitizeOptions, sanitize_path
 
 
 def _warning_messages(warnings: list[dict[str, object]]) -> list[str]:
@@ -27,6 +27,9 @@ def test_sanitize_image(tmp_path: Path) -> None:
     report = tmp_path / "report.jsonl"
     sanitize_path(img_path, out_dir, report)
     assert (out_dir / "test.jpg").exists()
+
+    item = json.loads(report.read_text(encoding="utf-8").strip())
+    assert item["report_version"] == REPORT_VERSION
 
 
 def test_sanitize_pdf(tmp_path: Path) -> None:

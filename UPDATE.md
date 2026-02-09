@@ -6,6 +6,9 @@
 - Added nested ZIP handling policy with secure default behavior (`--nested-archive-policy skip`, optional `copy`).
 - Added CLI controls for ZIP safety tuning: `--zip-max-members`, `--zip-max-member-bytes`, `--zip-max-total-bytes`, `--zip-max-compression-ratio`.
 - Expanded regression coverage for ZIP guardrails (count/size/ratio limits, nested policy, dry-run parity, option validation).
+- Added directory traversal guardrails for large inputs: `--max-files`, `--max-bytes` (emits `action=truncated` when limits are hit).
+- Added magic-bytes content-type sniffing to reduce extension spoofing and avoid hard errors on invalid `.pdf` inputs.
+- Published report contract docs (`docs/report.md`) and a per-line JSON Schema (`docs/report.schema.json`); report records now include `report_version`.
 
 ## Notes
 

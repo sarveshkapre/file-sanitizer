@@ -74,3 +74,7 @@ Notes:
 - Unsupported ZIP members are copied as-is by default (use `--no-copy-unsupported` to skip them).
 - Report warnings are structured objects with `code` and `message` for machine-actionable ingestion.
 - Office macro-enabled OOXML files (`.docm/.xlsm/.pptm` and templates) and OOXML macro indicators (ex: `vbaProject.bin`) are surfaced as warnings (macros are not removed).
+
+Report contract:
+- Schema documentation: `docs/report.md`
+- Optional JSON Schema (per JSONL line): `docs/report.schema.json`
