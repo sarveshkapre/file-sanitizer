@@ -116,6 +116,60 @@ def test_directory_input_preserves_structure(tmp_path: Path) -> None:
     assert (out_dir / "nested" / "x.png").exists()
 
 
+def test_directory_max_files_truncates(tmp_path: Path) -> None:
+    input_dir = tmp_path / "in"
+    input_dir.mkdir()
+    (input_dir / "a.txt").write_text("a", encoding="utf-8")
+    (input_dir / "b.txt").write_text("b", encoding="utf-8")
+    (input_dir / "c.txt").write_text("c", encoding="utf-8")
+
+    out_dir = tmp_path / "out"
+    report = tmp_path / "report.jsonl"
+    rc = sanitize_path(
+        input_dir,
+        out_dir,
+        report,
+        options=SanitizeOptions(max_files=2),
+    )
+    assert rc == 0
+
+    lines = report.read_text(encoding="utf-8").strip().splitlines()
+    assert len(lines) == 3
+    last = json.loads(lines[-1])
+    assert last["action"] == "truncated"
+    codes = {w["code"] for w in last["warnings"]}
+    assert "traversal_limit_reached" in codes
+
+    assert (out_dir / "a.txt").exists()
+    assert (out_dir / "b.txt").exists()
+    assert not (out_dir / "c.txt").exists()
+
+
+def test_directory_max_bytes_truncates(tmp_path: Path) -> None:
+    input_dir = tmp_path / "in"
+    input_dir.mkdir()
+    (input_dir / "a.txt").write_text("a" * 10, encoding="utf-8")
+    (input_dir / "b.txt").write_text("b" * 10, encoding="utf-8")
+
+    out_dir = tmp_path / "out"
+    report = tmp_path / "report.jsonl"
+    rc = sanitize_path(
+        input_dir,
+        out_dir,
+        report,
+        options=SanitizeOptions(max_bytes=15),
+    )
+    assert rc == 0
+
+    lines = report.read_text(encoding="utf-8").strip().splitlines()
+    assert len(lines) == 2
+    last = json.loads(lines[-1])
+    assert last["action"] == "truncated"
+
+    assert (out_dir / "a.txt").exists()
+    assert not (out_dir / "b.txt").exists()
+
+
 def test_flat_output_dedupes_names(tmp_path: Path) -> None:
     input_dir = tmp_path / "in"
     (input_dir / "a").mkdir(parents=True)

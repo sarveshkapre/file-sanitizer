@@ -47,6 +47,9 @@ file-sanitizer sanitize --input ./files --out ./sanitized --report-summary
 # Exit non-zero if any warnings are emitted (useful for CI policy)
 file-sanitizer sanitize --input ./files --out ./sanitized --dry-run --fail-on-warnings
 
+# Guardrails for huge directory inputs
+file-sanitizer sanitize --input ./files --out ./sanitized --max-files 50000 --max-bytes 1073741824
+
 # Block writing outputs if risky findings are detected (PDF active content indicators, risky ZIP findings, Office macro signals)
 file-sanitizer sanitize --input ./files --out ./sanitized --risky-policy block
 

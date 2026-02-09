@@ -7,13 +7,13 @@
 - Gaps found during codebase exploration
 
 ## Candidate Features To Do
-- [ ] P1: Add content-type sniffing (magic bytes) to reduce reliance on file extensions for sanitizer selection and reporting.
-- [ ] P1: Document report schema + warning codes as a stable contract (and optionally publish a JSON Schema).
-- [ ] P1: Add `--report-version` (or similar) to support forward report evolution without breaking downstream ingestion.
-- [ ] P1: Add benchmark/regression job for large directory and large ZIP inputs.
-- [ ] P2: Add optional recursive nested-archive sanitization mode with depth budget.
-- [ ] P2: Add optional allowlist mode (only export sanitized outputs for a set of extensions; skip everything else by default).
-- [ ] P2: Add `--max-files` / `--max-bytes` traversal guardrails for very large directory inputs.
+- [ ] P0 (impact: high, effort: med, risk: low, confidence: high): Add directory traversal guardrails (`--max-files`, `--max-bytes`) and switch directory walking to a streaming deterministic iterator (avoid materializing the full file list).
+- [ ] P0 (impact: high, effort: med, risk: low, confidence: high): Add content-type sniffing (magic bytes) for sanitizer selection and report enrichment, with safe ZIP vs OOXML heuristics (avoid treating `.docx` as a raw ZIP archive).
+- [ ] P0 (impact: high, effort: med, risk: low, confidence: high): Publish a stable report contract: document JSONL schema + warning codes, include `report_version` on every record, and ship an optional JSON Schema file.
+- [ ] P1 (impact: med, effort: med, risk: low, confidence: med): Prune excluded directories during traversal for performance (avoid walking into `.git`, `node_modules`, etc).
+- [ ] P1 (impact: med, effort: med, risk: low, confidence: med): Add benchmark/regression coverage for large directory and ZIP inputs (track runtime and memory).
+- [ ] P2 (impact: med, effort: high, risk: med, confidence: med): Add optional recursive nested-archive sanitization with a depth budget and expanded-bytes budget.
+- [ ] P2 (impact: med, effort: low, risk: low, confidence: med): Add allowlist mode (only export a configured set of extensions; skip everything else by default).
 
 ## Implemented
 - [x] 2026-02-09: Added structured warning taxonomy (`code` + `message`) for JSONL report warnings.

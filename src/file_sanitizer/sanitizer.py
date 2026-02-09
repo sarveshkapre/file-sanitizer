@@ -51,6 +51,8 @@ class SanitizeOptions:
     skip_symlinks: bool = True
     dry_run: bool = False
     exclude_globs: list[str] = field(default_factory=list)
+    max_files: int | None = None
+    max_bytes: int | None = None
     zip_max_members: int = DEFAULT_ZIP_MAX_MEMBERS
     zip_max_member_uncompressed_bytes: int = DEFAULT_ZIP_MAX_MEMBER_UNCOMPRESSED_BYTES
     zip_max_total_uncompressed_bytes: int = DEFAULT_ZIP_MAX_TOTAL_UNCOMPRESSED_BYTES
@@ -130,6 +132,9 @@ def sanitize_path(
 
     error_count = 0
     reserved_outputs: set[Path] = set()
+    files_seen = 0
+    bytes_seen = 0
+    truncated_warning: WarningItem | None = None
 
     input_root = input_path if input_path.is_dir() else input_path.parent
     input_root_resolved = input_root.resolve(strict=False)
@@ -137,7 +142,38 @@ def sanitize_path(
     report_path_resolved = report_path.resolve(strict=False)
 
     with report_path.open("w", encoding="utf-8") as out:
-        for file in _iter_files(input_path):
+        for file in _iter_files(
+            input_path,
+            input_root_resolved=input_root_resolved,
+            out_dir_resolved=out_dir_resolved,
+        ):
+            if opts.max_files is not None and files_seen >= opts.max_files:
+                truncated_warning = WarningItem(
+                    code="traversal_limit_reached",
+                    message=(
+                        f"directory traversal reached max_files={opts.max_files}; "
+                        f"stopped after files_seen={files_seen}"
+                    ),
+                )
+                break
+
+            if opts.max_bytes is not None:
+                try:
+                    size = max(int(file.stat().st_size), 0)
+                except Exception:  # noqa: BLE001
+                    size = 0
+                if bytes_seen + size > opts.max_bytes:
+                    truncated_warning = WarningItem(
+                        code="traversal_limit_reached",
+                        message=(
+                            f"directory traversal reached max_bytes={opts.max_bytes}; "
+                            f"stopped after bytes_seen={bytes_seen}"
+                        ),
+                    )
+                    break
+                bytes_seen += size
+
+            files_seen += 1
             item = _sanitize_one(
                 file=file,
                 input_root=input_root,
@@ -159,10 +195,25 @@ def sanitize_path(
             if on_item is not None:
                 on_item(item)
 
+        if truncated_warning is not None:
+            item = ReportItem(
+                input_path=str(input_root),
+                output_path=None,
+                action="truncated",
+                warnings=[truncated_warning],
+            )
+            out.write(json.dumps(item.to_dict()) + "\n")
+            if on_item is not None:
+                on_item(item)
+
     return 0 if error_count == 0 else 2
 
 
 def _validate_options(options: SanitizeOptions) -> None:
+    if options.max_files is not None and options.max_files < 1:
+        raise ValueError("max_files must be >= 1")
+    if options.max_bytes is not None and options.max_bytes < 1:
+        raise ValueError("max_bytes must be >= 1")
     if options.zip_max_members < 1:
         raise ValueError("zip_max_members must be >= 1")
     if options.zip_max_member_uncompressed_bytes < 1:
@@ -179,15 +230,36 @@ def _validate_options(options: SanitizeOptions) -> None:
         raise ValueError(f"risky_policy must be one of: {allowed}")
 
 
-def _iter_files(input_path: Path) -> Iterator[Path]:
-    if input_path.is_dir():
-        files = sorted(
-            (p for p in input_path.rglob("*") if p.is_file()),
-            key=lambda path: path.relative_to(input_path).as_posix(),
-        )
-        yield from files
+def _iter_files(
+    input_path: Path, *, input_root_resolved: Path, out_dir_resolved: Path
+) -> Iterator[Path]:
+    if not input_path.is_dir():
+        yield input_path
         return
-    yield input_path
+
+    # Deterministic walk without materializing the full file list in memory.
+    # If --out is inside the input tree, avoid descending into it (prevents work amplification
+    # when sanitizing a directory that already contains previous outputs).
+    prune_out = out_dir_resolved if out_dir_resolved.is_relative_to(input_root_resolved) else None
+    yield from _iter_dir_files_deterministic(input_path, prune_out=prune_out)
+
+
+def _iter_dir_files_deterministic(root: Path, *, prune_out: Path | None) -> Iterator[Path]:
+    for dirpath, dirnames, filenames in os.walk(root, topdown=True, followlinks=False):
+        dirnames.sort()
+        filenames.sort()
+
+        if prune_out is not None:
+            pruned: list[str] = []
+            for name in dirnames:
+                candidate = (Path(dirpath) / name).resolve(strict=False)
+                if candidate == prune_out or candidate.is_relative_to(prune_out):
+                    continue
+                pruned.append(name)
+            dirnames[:] = pruned
+
+        for name in filenames:
+            yield Path(dirpath) / name
 
 
 def _sanitize_one(

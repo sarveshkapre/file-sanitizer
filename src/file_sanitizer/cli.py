@@ -72,6 +72,20 @@ def main(argv: list[str] | None = None) -> int:
         help="Exclude paths matching this glob (repeatable, evaluated relative to input dir when input is a directory)",
     )
     p_run.add_argument(
+        "--max-files",
+        type=int,
+        default=None,
+        metavar="N",
+        help="Stop traversal after processing N files (directory inputs only; default: unlimited)",
+    )
+    p_run.add_argument(
+        "--max-bytes",
+        type=int,
+        default=None,
+        metavar="BYTES",
+        help="Stop traversal after processing BYTES of file sizes (directory inputs only; default: unlimited)",
+    )
+    p_run.add_argument(
         "--zip-max-members",
         type=int,
         default=DEFAULT_ZIP_MAX_MEMBERS,
@@ -153,6 +167,8 @@ def _run(args: argparse.Namespace) -> int:
             copy_unsupported=bool(args.copy_unsupported),
             dry_run=bool(args.dry_run),
             exclude_globs=list(args.exclude),
+            max_files=None if args.max_files is None else int(args.max_files),
+            max_bytes=None if args.max_bytes is None else int(args.max_bytes),
             zip_max_members=int(args.zip_max_members),
             zip_max_member_uncompressed_bytes=int(args.zip_max_member_bytes),
             zip_max_total_uncompressed_bytes=int(args.zip_max_total_bytes),
