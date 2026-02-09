@@ -7,12 +7,18 @@
 - Gaps found during codebase exploration
 
 ## Candidate Features To Do
-- [ ] P1 (impact: med, effort: low, risk: low, confidence: med): Support writing the JSONL report to stdout (`--report -`) for easier piping/automation.
-- [ ] P1 (impact: med, effort: med, risk: low, confidence: med): Add benchmark/regression coverage for large directory and ZIP inputs (track runtime and memory).
-- [ ] P2 (impact: med, effort: high, risk: med, confidence: med): Add optional recursive nested-archive sanitization with a depth budget and expanded-bytes budget.
-- [ ] P2 (impact: med, effort: med, risk: low, confidence: low): Expand image support beyond JPEG/PNG/WebP (HEIC/TIFF) if dependency footprint remains acceptable.
+- [ ] P1 (selected) (impact: med, effort: low, strategic fit: high, diff: low, risk: low, confidence: med): Add TIFF image support (`.tif/.tiff`) using the existing Pillow pipeline (re-save without EXIF).
+- [ ] P1 (selected) (impact: med, effort: low, strategic fit: med, diff: med, risk: low, confidence: med): Add a lightweight local benchmark harness (not in CI) for large directory and ZIP inputs to catch obvious regressions (runtime + peak temp dir size notes).
+- [ ] P1 (impact: med, effort: med, strategic fit: high, diff: low, risk: low, confidence: med): Add benchmark/regression coverage for large directory and ZIP inputs (track runtime and memory) in a CI-friendly way.
+- [ ] P2 (impact: med, effort: med, strategic fit: med, diff: med, risk: low, confidence: med): Add `--quiet` to suppress stderr summary lines (useful when piping `--report -` into tools).
+- [ ] P2 (impact: med, effort: med, strategic fit: med, diff: med, risk: med, confidence: med): Add run-level metadata record (input type, options snapshot, started_at/ended_at) as an optional first JSONL line.
+- [ ] P2 (impact: med, effort: high, strategic fit: high, diff: med, risk: med, confidence: med): Add optional recursive nested-archive sanitization with a depth budget and expanded-bytes budget.
+- [ ] P2 (impact: med, effort: med, strategic fit: med, diff: low, risk: low, confidence: low): Expand image support beyond JPEG/PNG/WebP/TIFF (HEIC) behind an optional extra dependency (do not bloat base install).
+- [ ] P2 (impact: low, effort: low, strategic fit: med, diff: low, risk: low, confidence: med): Document a stable mapping of warning codes to “recommended policy actions” (consumer guidance).
 
 ## Implemented
+- [x] 2026-02-09: Support writing the JSONL report to stdout via `--report -` (including summary append to stdout when `--report-summary` is set).
+  Evidence: `src/file_sanitizer/cli.py`, `src/file_sanitizer/sanitizer.py`, `tests/test_smoke.py`, `README.md`, `docs/report.md`.
 - [x] 2026-02-09: Prune excluded directories during traversal for performance (avoid walking into `.git`, `node_modules`, etc), emitting a single `action=excluded` record for the directory instead of visiting all children.
   Evidence: `src/file_sanitizer/sanitizer.py`, `tests/test_sanitizer.py`.
 - [x] 2026-02-09: Added allowlist mode (`--allow-ext`, repeatable) to skip non-allowlisted files by default (applies to ZIP members for `.zip` inputs).

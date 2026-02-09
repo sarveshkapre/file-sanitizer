@@ -5,6 +5,7 @@ import json
 import os
 import shutil
 import stat
+import sys
 import tempfile
 import zipfile
 from collections.abc import Callable, Iterator
@@ -12,7 +13,7 @@ from dataclasses import field
 from dataclasses import dataclass
 from fnmatch import fnmatchcase
 from pathlib import Path, PurePosixPath
-from typing import Any
+from typing import Any, TextIO
 
 from PIL import Image
 from pypdf import PdfReader, PdfWriter
@@ -141,7 +142,9 @@ def sanitize_path(
     exclude_globs = opts.exclude_globs or []
     allow_exts = _normalize_allow_exts(opts.allow_exts)
 
-    report_path.parent.mkdir(parents=True, exist_ok=True)
+    report_to_stdout = str(report_path) == "-"
+    if not report_to_stdout:
+        report_path.parent.mkdir(parents=True, exist_ok=True)
 
     error_count = 0
     reserved_outputs: set[Path] = set()
@@ -155,7 +158,8 @@ def sanitize_path(
     out_dir_resolved = out_dir.resolve(strict=False)
     report_path_resolved = report_path.resolve(strict=False)
 
-    with report_path.open("w", encoding="utf-8") as out:
+    def _write_report(out: TextIO) -> None:
+        nonlocal error_count, files_seen, bytes_seen, truncated_warning
         for t in _iter_files(
             input_path,
             input_root=input_root,
@@ -241,6 +245,12 @@ def sanitize_path(
             out.write(json.dumps(truncated_item.to_dict()) + "\n")
             if on_item is not None:
                 on_item(truncated_item)
+
+    if report_to_stdout:
+        _write_report(sys.stdout)
+    else:
+        with report_path.open("w", encoding="utf-8") as out:
+            _write_report(out)
 
     return 0 if error_count == 0 else 2
 

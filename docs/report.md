@@ -2,6 +2,8 @@
 
 `file-sanitizer` writes an audit report as newline-delimited JSON (JSONL): one JSON object per line.
 
+You can write the report to stdout by passing `--report -` (useful for piping into other tools).
+
 ## Record Types
 
 ### File records (always present)

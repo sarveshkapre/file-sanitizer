@@ -54,6 +54,46 @@ def test_cli_report_summary(tmp_path: Path) -> None:
     assert "errors" in summary
 
 
+def test_cli_report_stdout_dash_writes_to_stdout_and_does_not_create_dash_file(
+    tmp_path: Path,
+) -> None:
+    input_dir = tmp_path / "in"
+    input_dir.mkdir()
+    (input_dir / "a.txt").write_text("hello", encoding="utf-8")
+
+    out_dir = tmp_path / "out"
+
+    proc = subprocess.run(
+        [
+            sys.executable,
+            "-m",
+            "file_sanitizer",
+            "sanitize",
+            "--input",
+            str(input_dir),
+            "--out",
+            str(out_dir),
+            "--report",
+            "-",
+            "--dry-run",
+            "--report-summary",
+        ],
+        check=False,
+        capture_output=True,
+        text=True,
+        cwd=tmp_path,
+    )
+    assert proc.returncode == 0
+    assert not (tmp_path / "-").exists()
+
+    lines = proc.stdout.strip().splitlines()
+    assert len(lines) >= 2
+    summary = json.loads(lines[-1])
+    assert summary["type"] == "summary"
+    assert summary["dry_run"] is True
+    assert "wrote report to stdout" in proc.stderr
+
+
 def test_cli_fail_on_warnings_sets_nonzero_exit(tmp_path: Path) -> None:
     input_dir = tmp_path / "in"
     input_dir.mkdir()

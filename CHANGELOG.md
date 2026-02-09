@@ -8,6 +8,7 @@
 - Add CLI flags: `--flat`, `--[no-]overwrite`, `--[no-]copy-unsupported`, `--dry-run`.
 - Print summary stats (counts by action) to stderr.
 - Add optional report summary record (`--report-summary`).
+- Support writing the JSONL report to stdout (`--report -`) for piping/automation.
 - Add `--fail-on-warnings` (CI-friendly non-zero exit on warnings).
 - Add warning taxonomy (`code` + `message`) in JSONL report warnings for machine-actionable policy decisions.
 - Add Office macro detection warnings for OOXML macro-enabled documents and `vbaProject.bin` indicators.

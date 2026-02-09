@@ -31,7 +31,7 @@ def main(argv: list[str] | None = None) -> int:
     p_run.add_argument(
         "--report",
         default=None,
-        help="Path to JSONL report (default: <out>/sanitize-report.jsonl)",
+        help="Path to JSONL report (default: <out>/sanitize-report.jsonl; use '-' for stdout)",
     )
     p_run.add_argument(
         "--flat",
@@ -154,6 +154,7 @@ def main(argv: list[str] | None = None) -> int:
 def _run(args: argparse.Namespace) -> int:
     out_dir = Path(args.out)
     report = Path(args.report) if args.report is not None else (out_dir / "sanitize-report.jsonl")
+    report_to_stdout = str(report) == "-"
 
     counts: Counter[str] = Counter()
     warning_count = 0
@@ -197,7 +198,10 @@ def _run(args: argparse.Namespace) -> int:
     total = sum(counts.values())
     if args.dry_run:
         print("dry-run complete", file=sys.stderr)
-    print(f"wrote {report}", file=sys.stderr)
+    if report_to_stdout:
+        print("wrote report to stdout", file=sys.stderr)
+    else:
+        print(f"wrote {report}", file=sys.stderr)
     print(f"files: {total}", file=sys.stderr)
     print(f"warnings: {warning_count}", file=sys.stderr)
     print(f"errors: {error_count}", file=sys.stderr)
@@ -215,8 +219,11 @@ def _run(args: argparse.Namespace) -> int:
             "errors": int(error_count),
             "counts": dict(sorted(counts.items())),
         }
-        with report.open("a", encoding="utf-8") as fh:
-            fh.write(json.dumps(summary) + "\n")
+        if report_to_stdout:
+            sys.stdout.write(json.dumps(summary) + "\n")
+        else:
+            with report.open("a", encoding="utf-8") as fh:
+                fh.write(json.dumps(summary) + "\n")
     return rc
 
 
