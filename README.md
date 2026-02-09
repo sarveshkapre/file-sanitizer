@@ -35,6 +35,9 @@ file-sanitizer sanitize --input ./files --out ./sanitized --no-copy-unsupported
 # Exclude paths (repeatable; evaluated relative to input directory)
 file-sanitizer sanitize --input ./files --out ./sanitized --exclude .git --exclude node_modules
 
+# Only export selected extensions (repeatable; everything else is skipped)
+file-sanitizer sanitize --input ./files --out ./sanitized --allow-ext .pdf --allow-ext .jpg
+
 # Flatten outputs into a single directory (may rename to avoid collisions)
 file-sanitizer sanitize --input ./files --out ./sanitized --flat
 
@@ -71,6 +74,7 @@ Notes:
 - ZIP handling skips unsafe members (for example path traversal paths or symlinks) and reports warnings.
 - ZIP guardrails skip entries that exceed configured limits (entry count, per-entry size, total expanded bytes, compression ratio).
 - Nested ZIP members are skipped by default (use `--nested-archive-policy copy` to preserve them as-is).
+- When `--allow-ext` is set, non-allowlisted files are skipped; for `.zip` inputs, the allowlist is applied to ZIP members.
 - Unsupported ZIP members are copied as-is by default (use `--no-copy-unsupported` to skip them).
 - Report warnings are structured objects with `code` and `message` for machine-actionable ingestion.
 - Office macro-enabled OOXML files (`.docm/.xlsm/.pptm` and templates) and OOXML macro indicators (ex: `vbaProject.bin`) are surfaced as warnings (macros are not removed).

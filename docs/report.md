@@ -66,6 +66,8 @@ Common categories:
   - `content_type_detected`: magic-bytes detection caused sanitizer selection to differ from extension.
   - `content_type_detected_ooxml`: ZIP container looks like an Office OOXML document.
   - `content_type_mismatch`: extension implies a supported type but magic bytes do not match.
+- `allowlist_*`: allowlist mode findings.
+  - `allowlist_skipped`: file (or ZIP member) was skipped because its extension was not in `--allow-ext`.
 - `excluded_*`: exclusion behavior.
   - `excluded_by_pattern`
 - `unsupported_*`: unsupported file handling.
@@ -80,4 +82,3 @@ Common categories:
 - `0`: success (no `error` / `blocked` actions; warnings may be present).
 - `2`: at least one `error` or `blocked` action occurred.
 - `3`: `--fail-on-warnings` was set and at least one warning was emitted.
-

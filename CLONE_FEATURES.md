@@ -7,14 +7,16 @@
 - Gaps found during codebase exploration
 
 ## Candidate Features To Do
-- [ ] P0 (selected; impact: high, effort: low, risk: low, confidence: high): Prune excluded directories during traversal for performance (avoid walking into `.git`, `node_modules`, etc).
-- [ ] P1 (selected; impact: high, effort: low, risk: low, confidence: med): Add allowlist mode (only export a configured set of extensions; skip everything else by default).
 - [ ] P1 (impact: med, effort: low, risk: low, confidence: med): Support writing the JSONL report to stdout (`--report -`) for easier piping/automation.
 - [ ] P1 (impact: med, effort: med, risk: low, confidence: med): Add benchmark/regression coverage for large directory and ZIP inputs (track runtime and memory).
 - [ ] P2 (impact: med, effort: high, risk: med, confidence: med): Add optional recursive nested-archive sanitization with a depth budget and expanded-bytes budget.
 - [ ] P2 (impact: med, effort: med, risk: low, confidence: low): Expand image support beyond JPEG/PNG/WebP (HEIC/TIFF) if dependency footprint remains acceptable.
 
 ## Implemented
+- [x] 2026-02-09: Prune excluded directories during traversal for performance (avoid walking into `.git`, `node_modules`, etc), emitting a single `action=excluded` record for the directory instead of visiting all children.
+  Evidence: `src/file_sanitizer/sanitizer.py`, `tests/test_sanitizer.py`.
+- [x] 2026-02-09: Added allowlist mode (`--allow-ext`, repeatable) to skip non-allowlisted files by default (applies to ZIP members for `.zip` inputs).
+  Evidence: `src/file_sanitizer/cli.py`, `src/file_sanitizer/sanitizer.py`, `tests/test_sanitizer.py`, `README.md`, `docs/report.md`.
 - [x] 2026-02-09: Added directory traversal guardrails for large directory inputs (`--max-files`, `--max-bytes`) and switched directory walking to a streaming deterministic iterator.
   Evidence: `src/file_sanitizer/cli.py`, `src/file_sanitizer/sanitizer.py`, `tests/test_sanitizer.py`, `README.md`.
 - [x] 2026-02-09: Added magic-bytes content-type sniffing to reduce extension spoofing and avoid hard errors on invalid `.pdf` inputs (with OOXML heuristics to avoid treating Office docs as raw ZIP archives).

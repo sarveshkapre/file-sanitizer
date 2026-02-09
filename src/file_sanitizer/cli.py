@@ -73,6 +73,16 @@ def main(argv: list[str] | None = None) -> int:
         help="Exclude paths matching this glob (repeatable, evaluated relative to input dir when input is a directory)",
     )
     p_run.add_argument(
+        "--allow-ext",
+        action="append",
+        default=[],
+        metavar="EXT",
+        help=(
+            "Only export files with these extensions (repeatable). "
+            "When set, all other files are skipped even if --copy-unsupported is enabled."
+        ),
+    )
+    p_run.add_argument(
         "--max-files",
         type=int,
         default=None,
@@ -168,6 +178,7 @@ def _run(args: argparse.Namespace) -> int:
             copy_unsupported=bool(args.copy_unsupported),
             dry_run=bool(args.dry_run),
             exclude_globs=list(args.exclude),
+            allow_exts=list(args.allow_ext),
             max_files=None if args.max_files is None else int(args.max_files),
             max_bytes=None if args.max_bytes is None else int(args.max_bytes),
             zip_max_members=int(args.zip_max_members),

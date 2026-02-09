@@ -473,6 +473,83 @@ def test_exclude_prunes_directory_children_from_traversal(tmp_path: Path) -> Non
     assert "skip/b.txt" not in rels
 
 
+def test_allow_ext_skips_non_allowlisted_files(tmp_path: Path) -> None:
+    input_dir = tmp_path / "in"
+    input_dir.mkdir(parents=True)
+    (input_dir / "a.txt").write_text("nope", encoding="utf-8")
+
+    img = Image.new("RGB", (10, 10), color="red")
+    (input_dir / "b.jpg").parent.mkdir(parents=True, exist_ok=True)
+    img.save(input_dir / "b.jpg", format="JPEG")
+
+    out_dir = tmp_path / "out"
+    report = tmp_path / "report.jsonl"
+    rc = sanitize_path(
+        input_dir,
+        out_dir,
+        report,
+        options=SanitizeOptions(copy_unsupported=True, allow_exts=[".jpg"]),
+    )
+    assert rc == 0
+    assert not (out_dir / "a.txt").exists()
+    assert (out_dir / "b.jpg").exists()
+
+    items = [json.loads(line) for line in report.read_text(encoding="utf-8").splitlines()]
+    skipped = [i for i in items if i["input_path"].endswith("a.txt")][0]
+    assert skipped["action"] == "skipped"
+    assert [w["code"] for w in skipped["warnings"]] == ["allowlist_skipped"]
+
+
+def test_allow_ext_allows_unsupported_copy_when_allowlisted(tmp_path: Path) -> None:
+    input_dir = tmp_path / "in"
+    input_dir.mkdir(parents=True)
+    (input_dir / "a.txt").write_text("ok", encoding="utf-8")
+
+    out_dir = tmp_path / "out"
+    report = tmp_path / "report.jsonl"
+    rc = sanitize_path(
+        input_dir,
+        out_dir,
+        report,
+        options=SanitizeOptions(copy_unsupported=True, allow_exts=[".txt"]),
+    )
+    assert rc == 0
+    assert (out_dir / "a.txt").exists()
+
+
+def test_allow_ext_applies_to_zip_members(tmp_path: Path) -> None:
+    zip_path = tmp_path / "bundle.zip"
+
+    img = Image.new("RGB", (10, 10), color="red")
+    img_buf = io.BytesIO()
+    img.save(img_buf, format="JPEG")
+
+    with zipfile.ZipFile(zip_path, "w") as zip_out:
+        zip_out.writestr("docs/note.txt", "hello")
+        zip_out.writestr("images/photo.jpg", img_buf.getvalue())
+
+    out_dir = tmp_path / "out"
+    report = tmp_path / "report.jsonl"
+    rc = sanitize_path(
+        zip_path,
+        out_dir,
+        report,
+        options=SanitizeOptions(copy_unsupported=True, allow_exts=[".jpg"]),
+    )
+    assert rc == 0
+
+    out_zip = out_dir / "bundle.zip"
+    assert out_zip.exists()
+    with zipfile.ZipFile(out_zip, "r") as zip_in:
+        names = set(zip_in.namelist())
+    assert "images/photo.jpg" in names
+    assert "docs/note.txt" not in names
+
+    zip_item = [json.loads(line) for line in report.read_text(encoding="utf-8").splitlines()][0]
+    codes = [w["code"] for w in zip_item["warnings"]]
+    assert "allowlist_skipped" in codes
+
+
 def test_exclude_by_path_glob_skips_matching_files(tmp_path: Path) -> None:
     input_dir = tmp_path / "in"
     (input_dir / "docs").mkdir(parents=True)

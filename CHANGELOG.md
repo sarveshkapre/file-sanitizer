@@ -15,6 +15,7 @@
 - `--dry-run` no longer creates output directories unless needed for the report path.
 - Avoid re-processing newly written outputs when `--out` is inside the input tree.
 - Add `--exclude` (repeatable) to skip matching paths during traversal.
+- Add `--allow-ext` (repeatable) allowlist mode to skip non-allowlisted extensions by default.
 - Add ZIP archive sanitization with secure member filtering (unsafe/symlink/encrypted/duplicate entries skipped).
 - Sanitize supported ZIP members (image/PDF) and preserve unsupported members by policy.
 - Make directory and ZIP member processing deterministic for stable reports.

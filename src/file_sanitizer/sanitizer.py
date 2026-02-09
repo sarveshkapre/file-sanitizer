@@ -54,6 +54,7 @@ class SanitizeOptions:
     skip_symlinks: bool = True
     dry_run: bool = False
     exclude_globs: list[str] = field(default_factory=list)
+    allow_exts: list[str] = field(default_factory=list)
     max_files: int | None = None
     max_bytes: int | None = None
     zip_max_members: int = DEFAULT_ZIP_MAX_MEMBERS
@@ -138,6 +139,7 @@ def sanitize_path(
     opts = options or SanitizeOptions()
     _validate_options(opts)
     exclude_globs = opts.exclude_globs or []
+    allow_exts = _normalize_allow_exts(opts.allow_exts)
 
     report_path.parent.mkdir(parents=True, exist_ok=True)
 
@@ -148,6 +150,7 @@ def sanitize_path(
     truncated_warning: WarningItem | None = None
 
     input_root = input_path if input_path.is_dir() else input_path.parent
+    root_is_file_input = not input_path.is_dir()
     input_root_resolved = input_root.resolve(strict=False)
     out_dir_resolved = out_dir.resolve(strict=False)
     report_path_resolved = report_path.resolve(strict=False)
@@ -207,6 +210,7 @@ def sanitize_path(
             files_seen += 1
             item = _sanitize_one(
                 file=file,
+                is_root_input=root_is_file_input,
                 input_root=input_root,
                 input_root_resolved=input_root_resolved,
                 out_dir=out_dir,
@@ -215,6 +219,7 @@ def sanitize_path(
                 reserved_outputs=reserved_outputs,
                 options=opts,
                 exclude_globs=exclude_globs,
+                allow_exts=allow_exts,
             )
             if item is None:
                 continue
@@ -259,6 +264,7 @@ def _validate_options(options: SanitizeOptions) -> None:
     if options.risky_policy not in RISKY_POLICIES:
         allowed = ", ".join(sorted(RISKY_POLICIES))
         raise ValueError(f"risky_policy must be one of: {allowed}")
+    _normalize_allow_exts(options.allow_exts)
 
 
 def _iter_files(
@@ -319,6 +325,7 @@ def _iter_dir_files_deterministic(
 def _sanitize_one(
     *,
     file: Path,
+    is_root_input: bool,
     input_root: Path,
     input_root_resolved: Path,
     out_dir: Path,
@@ -327,6 +334,7 @@ def _sanitize_one(
     reserved_outputs: set[Path],
     options: SanitizeOptions,
     exclude_globs: list[str],
+    allow_exts: frozenset[str] | None,
 ) -> ReportItem | None:
     matched = _match_exclude_glob(file=file, input_root=input_root, globs=exclude_globs)
     if matched is not None:
@@ -355,6 +363,32 @@ def _sanitize_one(
     ):
         return None
 
+    if allow_exts is not None:
+        suffix = file.suffix.lower()
+        detected = None
+        if not suffix:
+            detected = _sniff_magic_path(file)
+        is_root_zip_container = is_root_input and (
+            suffix in ZIP_EXTS or (not suffix and detected == "zip")
+        )
+        if (not is_root_zip_container) and not _allowlist_allows(
+            suffix=suffix, detected=detected, allow_exts=allow_exts
+        ):
+            detail = f"extension {suffix or '<none>'}"
+            if detected is not None:
+                detail = f"{detail} detected {detected or 'unknown'}"
+            return ReportItem(
+                input_path=str(file),
+                output_path=None,
+                action="would_skip" if options.dry_run else "skipped",
+                warnings=[
+                    WarningItem(
+                        code="allowlist_skipped",
+                        message=f"disallowed by allow-ext allowlist ({detail})",
+                    )
+                ],
+            )
+
     output_path = _compute_output_path(
         file=file,
         input_root=input_root,
@@ -363,7 +397,7 @@ def _sanitize_one(
         reserved_outputs=reserved_outputs,
     )
     reserved_outputs.add(output_path.resolve(strict=False))
-    return _sanitize_file(file, output_path, options=options)
+    return _sanitize_file(file, output_path, options=options, allow_exts=allow_exts)
 
 
 def _compute_output_path(
@@ -448,7 +482,13 @@ def _scan_office_macro_indicators_bytes(payload: bytes) -> list[WarningItem]:
     return []
 
 
-def _sanitize_file(input_path: Path, output_path: Path, *, options: SanitizeOptions) -> ReportItem:
+def _sanitize_file(
+    input_path: Path,
+    output_path: Path,
+    *,
+    options: SanitizeOptions,
+    allow_exts: frozenset[str] | None,
+) -> ReportItem:
     if not options.dry_run:
         output_path.parent.mkdir(parents=True, exist_ok=True)
 
@@ -559,12 +599,16 @@ def _sanitize_file(input_path: Path, output_path: Path, *, options: SanitizeOpti
             return ReportItem(str(input_path), str(output_path), "pdf_sanitized", warnings)
         if is_zip_by_ext or is_zip_by_magic:
             if options.dry_run:
-                warnings.extend(_scan_zip_warnings(input_path, options=options))
+                warnings.extend(
+                    _scan_zip_warnings(input_path, options=options, allow_exts=allow_exts)
+                )
                 if options.risky_policy == "block" and _has_risky_findings(warnings):
                     warnings.append(_policy_blocked_warning())
                     return ReportItem(str(input_path), None, "would_block", warnings)
                 return ReportItem(str(input_path), str(output_path), "would_zip_sanitize", warnings)
-            warnings.extend(_sanitize_zip(input_path, output_path, options=options))
+            warnings.extend(
+                _sanitize_zip(input_path, output_path, options=options, allow_exts=allow_exts)
+            )
             return ReportItem(str(input_path), str(output_path), "zip_sanitized", warnings)
 
         if options.copy_unsupported:
@@ -677,17 +721,24 @@ def _scan_pdf_warnings(input_path: Path) -> list[WarningItem]:
     return _scan_pdf_risks(reader)
 
 
-def _scan_zip_warnings(input_path: Path, *, options: SanitizeOptions) -> list[WarningItem]:
+def _scan_zip_warnings(
+    input_path: Path, *, options: SanitizeOptions, allow_exts: frozenset[str] | None
+) -> list[WarningItem]:
     with zipfile.ZipFile(input_path, "r") as zip_in:
         return _sanitize_zip_members(
             zip_in,
             zip_out=None,
             options=options,
+            allow_exts=allow_exts,
         )
 
 
 def _sanitize_zip(
-    input_path: Path, output_path: Path, *, options: SanitizeOptions
+    input_path: Path,
+    output_path: Path,
+    *,
+    options: SanitizeOptions,
+    allow_exts: frozenset[str] | None,
 ) -> list[WarningItem]:
     tmp = _temp_path_for(output_path)
     try:
@@ -696,6 +747,7 @@ def _sanitize_zip(
                 zip_in,
                 zip_out=zip_out,
                 options=options,
+                allow_exts=allow_exts,
             )
         if options.risky_policy == "block" and _has_risky_findings(warnings):
             raise BlockedByPolicy(warnings=warnings)
@@ -711,6 +763,7 @@ def _sanitize_zip_members(
     *,
     zip_out: zipfile.ZipFile | None,
     options: SanitizeOptions,
+    allow_exts: frozenset[str] | None,
 ) -> list[WarningItem]:
     warnings: set[WarningItem] = set()
     seen_names: set[str] = set()
@@ -782,6 +835,17 @@ def _sanitize_zip_members(
             continue
 
         suffix = Path(output_name).suffix.lower()
+        if allow_exts is not None and suffix not in allow_exts:
+            warnings.add(
+                WarningItem(
+                    code="allowlist_skipped",
+                    message=(
+                        f"zip entry '{info.filename}' disallowed by allow-ext allowlist "
+                        f"(extension {suffix or '<none>'}); skipped"
+                    ),
+                )
+            )
+            continue
         expanded_size = max(int(info.file_size), 0)
         if expanded_size > options.zip_max_member_uncompressed_bytes:
             warnings.add(
@@ -1260,3 +1324,46 @@ def _match_exclude_glob(*, file: Path, input_root: Path, globs: list[str]) -> st
             return raw
 
     return None
+
+
+def _normalize_allow_exts(raw: list[str]) -> frozenset[str] | None:
+    if not raw:
+        return None
+
+    out: set[str] = set()
+    for value in raw:
+        ext = value.strip().lower()
+        if not ext:
+            raise ValueError("allow_exts entries must be non-empty")
+        if not ext.startswith("."):
+            ext = f".{ext}"
+        if ext == ".":
+            raise ValueError("allow_exts entry '.' is invalid")
+        if "/" in ext or "\\" in ext:
+            raise ValueError(f"allow_exts entry must not contain path separators: {value!r}")
+        out.add(ext)
+        # Common equivalence to reduce surprise.
+        if ext == ".jpg":
+            out.add(".jpeg")
+        if ext == ".jpeg":
+            out.add(".jpg")
+    return frozenset(out)
+
+
+def _allowlist_allows(*, suffix: str, detected: str | None, allow_exts: frozenset[str]) -> bool:
+    # Primary behavior: extension allowlist.
+    if suffix:
+        return suffix in allow_exts
+
+    # Secondary behavior: allow extensionless files by detected content type.
+    if detected == "pdf":
+        return ".pdf" in allow_exts
+    if detected == "zip":
+        return ".zip" in allow_exts
+    if detected == "jpeg":
+        return ".jpg" in allow_exts or ".jpeg" in allow_exts
+    if detected == "png":
+        return ".png" in allow_exts
+    if detected == "webp":
+        return ".webp" in allow_exts
+    return False
