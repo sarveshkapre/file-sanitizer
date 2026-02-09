@@ -886,7 +886,52 @@ def _sanitize_zip_members(
         if suffix in ZIP_EXTS:
             if options.nested_archive_policy == "copy":
                 try:
-                    data = zip_in.read(info)
+                    # Read with a hard cap to avoid zip-bomb DoS even if headers lie about sizes.
+                    remaining_total = (
+                        options.zip_max_total_uncompressed_bytes - total_expanded_bytes
+                    )
+                    if remaining_total <= 0:
+                        warnings.add(
+                            WarningItem(
+                                code="zip_total_expanded_limit_exceeded",
+                                message=(
+                                    "zip expanded size limit exceeded "
+                                    f"({options.zip_max_total_uncompressed_bytes} bytes); "
+                                    f"nested archive '{info.filename}' skipped"
+                                ),
+                            )
+                        )
+                        continue
+                    data = _read_zip_member_bounded(
+                        zip_in,
+                        info,
+                        max_uncompressed_bytes=min(
+                            options.zip_max_member_uncompressed_bytes, remaining_total
+                        ),
+                    )
+                except _ZipMemberTooLarge:
+                    if remaining_total < options.zip_max_member_uncompressed_bytes:
+                        warnings.add(
+                            WarningItem(
+                                code="zip_total_expanded_limit_exceeded",
+                                message=(
+                                    "zip expanded size limit exceeded "
+                                    f"({options.zip_max_total_uncompressed_bytes} bytes); "
+                                    f"nested archive '{info.filename}' skipped"
+                                ),
+                            )
+                        )
+                    else:
+                        warnings.add(
+                            WarningItem(
+                                code="zip_entry_oversize",
+                                message=(
+                                    f"zip entry '{info.filename}' expanded size exceeds "
+                                    f"limit {options.zip_max_member_uncompressed_bytes}; skipped"
+                                ),
+                            )
+                        )
+                    continue
                 except Exception as exc:  # noqa: BLE001
                     warnings.add(
                         WarningItem(
@@ -940,10 +985,51 @@ def _sanitize_zip_members(
             )
             continue
 
-        data = zip_in.read(info)
-        total_expanded_bytes += len(data)
-
         try:
+            remaining_total = options.zip_max_total_uncompressed_bytes - total_expanded_bytes
+            if remaining_total <= 0:
+                warnings.add(
+                    WarningItem(
+                        code="zip_total_expanded_limit_exceeded",
+                        message=(
+                            "zip expanded size limit exceeded "
+                            f"({options.zip_max_total_uncompressed_bytes} bytes); "
+                            f"entry '{info.filename}' and remaining data may be skipped"
+                        ),
+                    )
+                )
+                continue
+
+            # Read with a hard cap to avoid zip-bomb DoS even if headers lie about sizes.
+            read_limit = min(options.zip_max_member_uncompressed_bytes, remaining_total)
+            try:
+                data = _read_zip_member_bounded(zip_in, info, max_uncompressed_bytes=read_limit)
+            except _ZipMemberTooLarge:
+                if remaining_total < options.zip_max_member_uncompressed_bytes:
+                    warnings.add(
+                        WarningItem(
+                            code="zip_total_expanded_limit_exceeded",
+                            message=(
+                                "zip expanded size limit exceeded "
+                                f"({options.zip_max_total_uncompressed_bytes} bytes); "
+                                f"entry '{info.filename}' skipped"
+                            ),
+                        )
+                    )
+                else:
+                    warnings.add(
+                        WarningItem(
+                            code="zip_entry_oversize",
+                            message=(
+                                f"zip entry '{info.filename}' expanded size exceeds "
+                                f"limit {options.zip_max_member_uncompressed_bytes}; skipped"
+                            ),
+                        )
+                    )
+                continue
+
+            total_expanded_bytes += len(data)
+
             if suffix in IMAGE_EXTS:
                 payload = _sanitize_image_bytes(data, suffix=suffix)
             elif suffix in PDF_EXTS:
@@ -1012,6 +1098,29 @@ def _sanitize_zip_members(
             _write_zip_member(zip_out, info, output_name, payload)
 
     return sorted(warnings, key=lambda w: (w.code, w.message))
+
+
+class _ZipMemberTooLarge(Exception):
+    pass
+
+
+def _read_zip_member_bounded(
+    zip_in: zipfile.ZipFile, info: zipfile.ZipInfo, *, max_uncompressed_bytes: int
+) -> bytes:
+    # `zipfile.ZipInfo.file_size` comes from headers and can be forged. Stream and enforce a hard cap.
+    # We still return bytes because the sanitizer needs whole-file access for supported types.
+    chunks: list[bytes] = []
+    total = 0
+    with zip_in.open(info, "r") as fh:
+        while True:
+            chunk = fh.read(64 * 1024)
+            if not chunk:
+                break
+            total += len(chunk)
+            if total > max_uncompressed_bytes:
+                raise _ZipMemberTooLarge()
+            chunks.append(chunk)
+    return b"".join(chunks)
 
 
 def _zip_compression_ratio(expanded_size: int, compressed_size: int) -> float:
