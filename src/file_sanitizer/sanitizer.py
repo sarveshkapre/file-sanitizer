@@ -98,6 +98,13 @@ class ReportItem:
         }
 
 
+@dataclass(frozen=True)
+class TraversalItem:
+    kind: str  # "file" | "excluded_dir"
+    path: Path
+    excluded_glob: str | None = None
+
+
 def _is_risky_warning(w: WarningItem) -> bool:
     if w.code.startswith("pdf_risk_") or w.code == "pdf_scan_failed":
         return True
@@ -146,11 +153,31 @@ def sanitize_path(
     report_path_resolved = report_path.resolve(strict=False)
 
     with report_path.open("w", encoding="utf-8") as out:
-        for file in _iter_files(
+        for t in _iter_files(
             input_path,
+            input_root=input_root,
             input_root_resolved=input_root_resolved,
             out_dir_resolved=out_dir_resolved,
+            exclude_globs=exclude_globs,
         ):
+            if t.kind == "excluded_dir":
+                excluded_item = ReportItem(
+                    input_path=str(t.path),
+                    output_path=None,
+                    action="excluded",
+                    warnings=[
+                        WarningItem(
+                            code="excluded_by_pattern",
+                            message=f"excluded by pattern: {t.excluded_glob}",
+                        )
+                    ],
+                )
+                out.write(json.dumps(excluded_item.to_dict()) + "\n")
+                if on_item is not None:
+                    on_item(excluded_item)
+                continue
+
+            file = t.path
             if opts.max_files is not None and files_seen >= opts.max_files:
                 truncated_warning = WarningItem(
                     code="traversal_limit_reached",
@@ -200,15 +227,15 @@ def sanitize_path(
                 on_item(item)
 
         if truncated_warning is not None:
-            item = ReportItem(
+            truncated_item = ReportItem(
                 input_path=str(input_root),
                 output_path=None,
                 action="truncated",
                 warnings=[truncated_warning],
             )
-            out.write(json.dumps(item.to_dict()) + "\n")
+            out.write(json.dumps(truncated_item.to_dict()) + "\n")
             if on_item is not None:
-                on_item(item)
+                on_item(truncated_item)
 
     return 0 if error_count == 0 else 2
 
@@ -235,20 +262,29 @@ def _validate_options(options: SanitizeOptions) -> None:
 
 
 def _iter_files(
-    input_path: Path, *, input_root_resolved: Path, out_dir_resolved: Path
-) -> Iterator[Path]:
+    input_path: Path,
+    *,
+    input_root: Path,
+    input_root_resolved: Path,
+    out_dir_resolved: Path,
+    exclude_globs: list[str],
+) -> Iterator[TraversalItem]:
     if not input_path.is_dir():
-        yield input_path
+        yield TraversalItem(kind="file", path=input_path)
         return
 
     # Deterministic walk without materializing the full file list in memory.
     # If --out is inside the input tree, avoid descending into it (prevents work amplification
     # when sanitizing a directory that already contains previous outputs).
     prune_out = out_dir_resolved if out_dir_resolved.is_relative_to(input_root_resolved) else None
-    yield from _iter_dir_files_deterministic(input_path, prune_out=prune_out)
+    yield from _iter_dir_files_deterministic(
+        input_path, prune_out=prune_out, input_root=input_root, exclude_globs=exclude_globs
+    )
 
 
-def _iter_dir_files_deterministic(root: Path, *, prune_out: Path | None) -> Iterator[Path]:
+def _iter_dir_files_deterministic(
+    root: Path, *, prune_out: Path | None, input_root: Path, exclude_globs: list[str]
+) -> Iterator[TraversalItem]:
     for dirpath, dirnames, filenames in os.walk(root, topdown=True, followlinks=False):
         dirnames.sort()
         filenames.sort()
@@ -262,8 +298,22 @@ def _iter_dir_files_deterministic(root: Path, *, prune_out: Path | None) -> Iter
                 pruned.append(name)
             dirnames[:] = pruned
 
+        if exclude_globs:
+            kept: list[str] = []
+            for name in dirnames:
+                candidate = Path(dirpath) / name
+                matched = _match_exclude_glob(
+                    file=candidate, input_root=input_root, globs=exclude_globs
+                )
+                if matched is not None:
+                    # Emit a single record for the excluded directory and prune traversal for performance.
+                    yield TraversalItem(kind="excluded_dir", path=candidate, excluded_glob=matched)
+                    continue
+                kept.append(name)
+            dirnames[:] = kept
+
         for name in filenames:
-            yield Path(dirpath) / name
+            yield TraversalItem(kind="file", path=Path(dirpath) / name)
 
 
 def _sanitize_one(

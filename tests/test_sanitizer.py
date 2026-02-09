@@ -446,6 +446,33 @@ def test_exclude_by_segment_skips_matching_dir(tmp_path: Path) -> None:
     assert '"action": "excluded"' in report_text
 
 
+def test_exclude_prunes_directory_children_from_traversal(tmp_path: Path) -> None:
+    input_dir = tmp_path / "in"
+    (input_dir / "skip").mkdir(parents=True)
+    (input_dir / "keep").mkdir(parents=True)
+    (input_dir / "skip" / "a.txt").write_text("nope", encoding="utf-8")
+    (input_dir / "skip" / "b.txt").write_text("nope2", encoding="utf-8")
+    (input_dir / "keep" / "c.txt").write_text("ok", encoding="utf-8")
+
+    out_dir = tmp_path / "out"
+    report = tmp_path / "report.jsonl"
+    rc = sanitize_path(
+        input_dir,
+        out_dir,
+        report,
+        options=SanitizeOptions(copy_unsupported=True, exclude_globs=["skip"]),
+    )
+    assert rc == 0
+
+    rels = [
+        Path(json.loads(line)["input_path"]).relative_to(input_dir).as_posix()
+        for line in report.read_text(encoding="utf-8").splitlines()
+    ]
+    assert "skip" in rels
+    assert "skip/a.txt" not in rels
+    assert "skip/b.txt" not in rels
+
+
 def test_exclude_by_path_glob_skips_matching_files(tmp_path: Path) -> None:
     input_dir = tmp_path / "in"
     (input_dir / "docs").mkdir(parents=True)
