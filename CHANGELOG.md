@@ -5,6 +5,7 @@
 - Preserve directory structure on directory inputs (avoids collisions).
 - Atomic output writes (reduces partial-file risk on failure).
 - Add PDF risk scanning warnings (OpenAction/JavaScript/actions/forms/attachments).
+- Add TIFF image sanitization support (`.tif/.tiff`).
 - Add CLI flags: `--flat`, `--[no-]overwrite`, `--[no-]copy-unsupported`, `--dry-run`.
 - Print summary stats (counts by action) to stderr.
 - Add optional report summary record (`--report-summary`).

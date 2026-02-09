@@ -7,7 +7,6 @@
 - Gaps found during codebase exploration
 
 ## Candidate Features To Do
-- [ ] P1 (selected) (impact: med, effort: low, strategic fit: high, diff: low, risk: low, confidence: med): Add TIFF image support (`.tif/.tiff`) using the existing Pillow pipeline (re-save without EXIF).
 - [ ] P1 (selected) (impact: med, effort: low, strategic fit: med, diff: med, risk: low, confidence: med): Add a lightweight local benchmark harness (not in CI) for large directory and ZIP inputs to catch obvious regressions (runtime + peak temp dir size notes).
 - [ ] P1 (impact: med, effort: med, strategic fit: high, diff: low, risk: low, confidence: med): Add benchmark/regression coverage for large directory and ZIP inputs (track runtime and memory) in a CI-friendly way.
 - [ ] P2 (impact: med, effort: med, strategic fit: med, diff: med, risk: low, confidence: med): Add `--quiet` to suppress stderr summary lines (useful when piping `--report -` into tools).
@@ -17,6 +16,8 @@
 - [ ] P2 (impact: low, effort: low, strategic fit: med, diff: low, risk: low, confidence: med): Document a stable mapping of warning codes to “recommended policy actions” (consumer guidance).
 
 ## Implemented
+- [x] 2026-02-09: Add TIFF image sanitization support (`.tif/.tiff`).
+  Evidence: `src/file_sanitizer/sanitizer.py`, `tests/test_sanitizer.py`, `CHANGELOG.md`.
 - [x] 2026-02-09: Support writing the JSONL report to stdout via `--report -` (including summary append to stdout when `--report-summary` is set).
   Evidence: `src/file_sanitizer/cli.py`, `src/file_sanitizer/sanitizer.py`, `tests/test_smoke.py`, `README.md`, `docs/report.md`.
 - [x] 2026-02-09: Prune excluded directories during traversal for performance (avoid walking into `.git`, `node_modules`, etc), emitting a single `action=excluded` record for the directory instead of visiting all children.

@@ -7,7 +7,7 @@ import zipfile
 from pathlib import Path
 
 import pytest
-from PIL import Image
+from PIL import Image, TiffImagePlugin
 from pypdf import PdfReader, PdfWriter
 from pypdf.generic import DictionaryObject, NameObject, TextStringObject
 
@@ -30,6 +30,23 @@ def test_sanitize_image(tmp_path: Path) -> None:
 
     item = json.loads(report.read_text(encoding="utf-8").strip())
     assert item["report_version"] == REPORT_VERSION
+
+
+def test_sanitize_tiff_strips_common_tags(tmp_path: Path) -> None:
+    img_path = tmp_path / "test.tiff"
+    img = Image.new("RGB", (10, 10), color="red")
+    info = TiffImagePlugin.ImageFileDirectory_v2()
+    info[270] = "secret-desc"
+    img.save(img_path, format="TIFF", tiffinfo=info)
+
+    out_dir = tmp_path / "out"
+    report = tmp_path / "report.jsonl"
+    sanitize_path(img_path, out_dir, report)
+    out_path = out_dir / "test.tiff"
+    assert out_path.exists()
+
+    with Image.open(out_path) as out_img:
+        assert out_img.tag_v2.get(270) is None
 
 
 def test_sanitize_pdf(tmp_path: Path) -> None:

@@ -20,7 +20,7 @@ from pypdf import PdfReader, PdfWriter
 from pypdf.generic import ArrayObject, DictionaryObject, IndirectObject
 
 
-IMAGE_EXTS = {".jpg", ".jpeg", ".png", ".webp"}
+IMAGE_EXTS = {".jpg", ".jpeg", ".png", ".webp", ".tif", ".tiff"}
 PDF_EXTS = {".pdf"}
 ZIP_EXTS = {".zip"}
 OFFICE_OOXML_EXTS = {
@@ -1083,6 +1083,10 @@ def _sanitize_image_bytes(input_bytes: bytes, *, suffix: str) -> bytes:
         )
     elif out_format == "PNG":
         data.save(out, format=out_format, optimize=True)
+    elif out_format == "TIFF":
+        # Converting drops TIFF tags/IFDs that may carry metadata.
+        data = data.convert("RGB")
+        data.save(out, format=out_format, compression="tiff_deflate")
     else:
         data.save(out, format=out_format, exif=b"", icc_profile=None, quality=90, method=6)
     return out.getvalue()
@@ -1108,6 +1112,8 @@ def _image_format_for_suffix(suffix: str) -> str:
         ".jpeg": "JPEG",
         ".png": "PNG",
         ".webp": "WEBP",
+        ".tif": "TIFF",
+        ".tiff": "TIFF",
     }[suffix]
 
 
