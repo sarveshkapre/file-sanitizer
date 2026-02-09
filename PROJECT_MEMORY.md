@@ -2,6 +2,43 @@
 
 ## Decision Log
 
+### 2026-02-09 - Stdout JSONL reports (`--report -`) and report-summary to stdout
+- Decision: Support writing the JSONL report to stdout via `--report -` and ensure `--report-summary` appends the summary record to stdout in this mode (stderr summary remains for humans/CI logs).
+- Why: Enables piping into jq/ingestion systems without managing a report file path and prevents accidental creation of a literal `./-` file.
+- Evidence:
+  - Code: `src/file_sanitizer/sanitizer.py`, `src/file_sanitizer/cli.py`
+  - Docs: `README.md`, `docs/report.md`, `CHANGELOG.md`
+  - Tests: `tests/test_smoke.py`
+  - Verification: `make check` (pass, `47 passed`)
+  - Smoke: `.venv/bin/python -m file_sanitizer sanitize --input "$tmpdir/in" --out "$tmpdir/out" --report - --dry-run --report-summary` (pass; JSONL file records + summary emitted on stdout)
+- Commit: `9cd15aa990a31ed7a6afcd71a5e6c3f27ad409e4`
+- Confidence: High
+- Trust label: verified-local
+
+### 2026-02-09 - TIFF image sanitization support (`.tif/.tiff`)
+- Decision: Add TIFF to supported image inputs and sanitize by re-encoding through Pillow with a metadata-dropping conversion step (convert to RGB, then write TIFF with deflate compression).
+- Why: TIFF is a common “scanned doc” container and often carries metadata in tags/IFDs; broadening image support improves real-world usefulness without adding dependencies.
+- Evidence:
+  - Code: `src/file_sanitizer/sanitizer.py`
+  - Tests: `tests/test_sanitizer.py` (writes TIFF with ImageDescription tag and asserts tag is absent post-sanitize)
+  - Verification: `make check` (pass, `47 passed`)
+  - Smoke: `.venv/bin/python -m file_sanitizer sanitize --input "$tmpdir/secret.tiff" --out "$tmpdir/out" --report "$tmpdir/report.jsonl"` (pass; output TIFF tag 270 absent)
+- Commit: `1bc6b03b1c49f1438e369a4fc5c73b57f9ff7c34`
+- Confidence: Medium-High
+- Trust label: verified-local
+
+### 2026-02-09 - Lightweight benchmark harness (local-only)
+- Decision: Add a simple benchmark script to generate synthetic directory/ZIP fixtures and time sanitizer runs (default dry-run) without adding CI runtime risk.
+- Why: Provides a low-friction way to catch obvious performance regressions during development and when tuning guardrails.
+- Evidence:
+  - Code: `scripts/bench_sanitize.py`
+  - Docs: `README.md`
+  - Verification: `make check` (pass, `47 passed`)
+  - Smoke: `.venv/bin/python scripts/bench_sanitize.py --kind dir --count 2000 --bytes 64` and `--kind zip ...` (pass; prints JSON timings)
+- Commit: `74ffe48a5c2f76d1105ef7393117c88d503d9b3b`
+- Confidence: Medium
+- Trust label: verified-local
+
 ### 2026-02-09 - Exclude traversal pruning and allowlist mode (`--allow-ext`)
 - Decision: When an `--exclude` glob matches a directory during traversal, prune it (do not walk into it) and emit a single `action=excluded` record for that directory.
 - Decision: Add allowlist mode via `--allow-ext` (repeatable); when set, non-allowlisted files are skipped, and for `.zip` inputs the allowlist is applied to ZIP members.
