@@ -49,12 +49,13 @@
   Evidence: `README.md`, `PLAN.md`, `ROADMAP.md`, `CHANGELOG.md`, `UPDATE.md`.
 - [x] 2026-02-09: Verification evidence captured.
   Commands:
-  - `make check` -> pass (`35 passed`, mypy/ruff/build clean).
+  - `make check` -> pass (`41 passed`, mypy/ruff/build clean).
   - `.venv/bin/python -m file_sanitizer sanitize --input tests/fixtures/mixed-bundle.zip --out "$tmpdir/out" --report "$tmpdir/report.jsonl" --report-summary` -> pass (`rc=0`, `zip_sanitized: 1`, output ZIP entries: `docs/readme.txt`, `images/exif-photo.jpg`, `pdfs/risky.pdf`, and report warnings are structured via `code` + `message`).
   - `.venv/bin/python -m file_sanitizer sanitize --input tests/fixtures/mixed-bundle.zip --out "$tmpdir/out" --report "$tmpdir/report.jsonl" --risky-policy block` -> expected policy block (`rc=2`, `action=blocked`, output ZIP not written).
   - `.venv/bin/python -m file_sanitizer sanitize --input "$tmpdir/macro.docm" --out "$tmpdir/out" --report "$tmpdir/report.jsonl"` -> pass (`rc=0`, warnings include `office_macro_enabled`, `office_macro_indicator_vbaproject`).
   - `.venv/bin/python -m file_sanitizer sanitize --input tests/fixtures/mixed-bundle.zip --out "$tmpdir/out" --report "$tmpdir/report.jsonl" --dry-run --fail-on-warnings` -> expected strict failure (`rc=3`, `would_zip_sanitize: 1`).
   - `.venv/bin/python -m file_sanitizer sanitize --input "$tmpdir/outer.zip" --out "$tmpdir/out" --report "$tmpdir/report.jsonl" --nested-archive-policy copy --zip-max-members 10 --zip-max-member-bytes 1024 --zip-max-total-bytes 4096 --zip-max-compression-ratio 200` -> pass (`rc=0`, output ZIP entries include `docs/note.txt`, `nested/inner.zip`).
+  - `.venv/bin/python -m file_sanitizer sanitize --input "$tmpdir/in" --out "$tmpdir/out" --report "$tmpdir/report.jsonl" --max-files 2 --report-summary` -> pass (report includes `report_version: 1`, `content_type_detected` warnings for renamed PDF/ZIP, and `action=truncated` when guardrails stop traversal).
 
 ## Insights
 - Deterministic iteration improves CI reproducibility and reduces flaky report diffs.
