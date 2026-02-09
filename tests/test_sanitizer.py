@@ -1,10 +1,13 @@
 from __future__ import annotations
 
+import io
 import json
+import stat
+import zipfile
 from pathlib import Path
 
 from PIL import Image
-from pypdf import PdfWriter
+from pypdf import PdfReader, PdfWriter
 from pypdf.generic import DictionaryObject, NameObject, TextStringObject
 
 from file_sanitizer.sanitizer import SanitizeOptions, sanitize_path
@@ -235,3 +238,135 @@ def test_exclude_by_path_glob_skips_matching_files(tmp_path: Path) -> None:
     assert rc == 0
     assert not (out_dir / "docs" / "a.txt").exists()
     assert (out_dir / "docs" / "b.md").exists()
+
+
+def test_directory_report_order_is_deterministic(tmp_path: Path) -> None:
+    input_dir = tmp_path / "in"
+    (input_dir / "b").mkdir(parents=True)
+    (input_dir / "a").mkdir(parents=True)
+    (input_dir / "b" / "z.txt").write_text("z", encoding="utf-8")
+    (input_dir / "a" / "y.txt").write_text("y", encoding="utf-8")
+    (input_dir / "a" / "x.txt").write_text("x", encoding="utf-8")
+
+    out_dir = tmp_path / "out"
+    report = tmp_path / "report.jsonl"
+    rc = sanitize_path(input_dir, out_dir, report)
+    assert rc == 0
+
+    rel_paths = [
+        Path(json.loads(line)["input_path"]).relative_to(input_dir).as_posix()
+        for line in report.read_text(encoding="utf-8").splitlines()
+    ]
+    assert rel_paths == sorted(rel_paths)
+
+
+def test_zip_sanitize_sanitizes_members_and_skips_unsafe_entries(tmp_path: Path) -> None:
+    zip_path = tmp_path / "bundle.zip"
+
+    img = Image.new("RGB", (10, 10), color="red")
+    img_buf = io.BytesIO()
+    img.save(img_buf, format="JPEG")
+
+    pdf_writer = PdfWriter()
+    pdf_writer.add_blank_page(width=72, height=72)
+    pdf_writer.add_metadata({"/Author": "alice"})
+    pdf_writer._root_object.update(  # noqa: SLF001
+        {
+            NameObject("/OpenAction"): DictionaryObject(
+                {
+                    NameObject("/S"): NameObject("/JavaScript"),
+                    NameObject("/JS"): TextStringObject("app.alert('hi')"),
+                }
+            )
+        }
+    )
+    pdf_buf = io.BytesIO()
+    pdf_writer.write(pdf_buf)
+
+    with zipfile.ZipFile(zip_path, "w") as zip_out:
+        zip_out.writestr("docs/note.txt", "hello")
+        zip_out.writestr("images/photo.jpg", img_buf.getvalue())
+        zip_out.writestr("pdfs/doc.pdf", pdf_buf.getvalue())
+        zip_out.writestr("../escape.txt", "nope")
+
+        symlink = zipfile.ZipInfo("docs/link")
+        symlink.create_system = 3
+        symlink.external_attr = (stat.S_IFLNK | 0o777) << 16
+        zip_out.writestr(symlink, "note.txt")
+
+    out_dir = tmp_path / "out"
+    report = tmp_path / "report.jsonl"
+    rc = sanitize_path(zip_path, out_dir, report)
+    assert rc == 0
+
+    out_zip = out_dir / "bundle.zip"
+    assert out_zip.exists()
+
+    line = json.loads(report.read_text(encoding="utf-8").strip())
+    warnings = line["warnings"]
+    assert any("unsafe path" in warning for warning in warnings)
+    assert any("symlink" in warning for warning in warnings)
+    assert any("unsupported; copied as-is" in warning for warning in warnings)
+    assert any("/OpenAction" in warning for warning in warnings)
+
+    with zipfile.ZipFile(out_zip, "r") as zip_in:
+        names = set(zip_in.namelist())
+        assert "images/photo.jpg" in names
+        assert "pdfs/doc.pdf" in names
+        assert "docs/note.txt" in names
+        assert "../escape.txt" not in names
+        assert "docs/link" not in names
+
+        with Image.open(io.BytesIO(zip_in.read("images/photo.jpg"))) as sanitized_img:
+            assert len(sanitized_img.getexif()) == 0
+
+        reader = PdfReader(io.BytesIO(zip_in.read("pdfs/doc.pdf")))
+        metadata = reader.metadata
+        assert metadata is not None
+        assert metadata.get("/Author") is None
+        root_ref = reader.trailer.get("/Root")
+        assert root_ref is not None
+        root = root_ref.get_object()
+        assert "/OpenAction" not in root
+
+
+def test_zip_respects_copy_unsupported_false(tmp_path: Path) -> None:
+    zip_path = tmp_path / "bundle.zip"
+    with zipfile.ZipFile(zip_path, "w") as zip_out:
+        zip_out.writestr("docs/note.txt", "hello")
+
+    out_dir = tmp_path / "out"
+    report = tmp_path / "report.jsonl"
+    rc = sanitize_path(
+        zip_path,
+        out_dir,
+        report,
+        options=SanitizeOptions(copy_unsupported=False),
+    )
+    assert rc == 0
+
+    out_zip = out_dir / "bundle.zip"
+    assert out_zip.exists()
+    with zipfile.ZipFile(out_zip, "r") as zip_in:
+        assert zip_in.namelist() == []
+
+    warnings = json.loads(report.read_text(encoding="utf-8").strip())["warnings"]
+    assert any("unsupported; skipped" in warning for warning in warnings)
+
+
+def test_zip_dry_run_does_not_write_outputs(tmp_path: Path) -> None:
+    zip_path = tmp_path / "bundle.zip"
+    with zipfile.ZipFile(zip_path, "w") as zip_out:
+        zip_out.writestr("docs/note.txt", "hello")
+
+    out_dir = tmp_path / "out"
+    report = tmp_path / "report.jsonl"
+    rc = sanitize_path(
+        zip_path,
+        out_dir,
+        report,
+        options=SanitizeOptions(dry_run=True),
+    )
+    assert rc == 0
+    assert not (out_dir / "bundle.zip").exists()
+    assert "would_zip_sanitize" in report.read_text(encoding="utf-8")

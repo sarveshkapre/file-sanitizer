@@ -1,13 +1,16 @@
 from __future__ import annotations
 
+import io
 import json
 import os
 import shutil
+import stat
 import tempfile
+import zipfile
 from collections.abc import Callable, Iterator
+from dataclasses import field
 from dataclasses import dataclass
 from fnmatch import fnmatchcase
-from dataclasses import field
 from pathlib import Path, PurePosixPath
 from typing import Any
 
@@ -18,6 +21,7 @@ from pypdf.generic import ArrayObject, DictionaryObject, IndirectObject
 
 IMAGE_EXTS = {".jpg", ".jpeg", ".png", ".webp"}
 PDF_EXTS = {".pdf"}
+ZIP_EXTS = {".zip"}
 
 
 @dataclass(frozen=True)
@@ -70,13 +74,7 @@ def sanitize_path(
     report_path_resolved = report_path.resolve(strict=False)
 
     with report_path.open("w", encoding="utf-8") as out:
-        files: Iterator[Path]
-        if input_path.is_dir() and out_dir_resolved.is_relative_to(input_root_resolved):
-            files = iter([p for p in input_path.rglob("*") if p.is_file()])
-        else:
-            files = _iter_files(input_path)
-
-        for file in files:
+        for file in _iter_files(input_path):
             item = _sanitize_one(
                 file=file,
                 input_root=input_root,
@@ -103,7 +101,11 @@ def sanitize_path(
 
 def _iter_files(input_path: Path) -> Iterator[Path]:
     if input_path.is_dir():
-        yield from (p for p in input_path.rglob("*") if p.is_file())
+        files = sorted(
+            (p for p in input_path.rglob("*") if p.is_file()),
+            key=lambda path: path.relative_to(input_path).as_posix(),
+        )
+        yield from files
         return
     yield input_path
 
@@ -210,6 +212,12 @@ def _sanitize_file(input_path: Path, output_path: Path, *, options: SanitizeOpti
                 return ReportItem(str(input_path), str(output_path), "would_pdf_sanitize", warnings)
             warnings.extend(_sanitize_pdf(input_path, output_path))
             return ReportItem(str(input_path), str(output_path), "pdf_sanitized", warnings)
+        if suffix in ZIP_EXTS:
+            if options.dry_run:
+                warnings.extend(_scan_zip_warnings(input_path, options=options))
+                return ReportItem(str(input_path), str(output_path), "would_zip_sanitize", warnings)
+            warnings.extend(_sanitize_zip(input_path, output_path, options=options))
+            return ReportItem(str(input_path), str(output_path), "zip_sanitized", warnings)
 
         if options.copy_unsupported:
             if options.dry_run:
@@ -231,55 +239,25 @@ def _sanitize_file(input_path: Path, output_path: Path, *, options: SanitizeOpti
 
 
 def _sanitize_image(input_path: Path, output_path: Path) -> None:
-    out_ext = output_path.suffix.lower()
-    out_format = {
-        ".jpg": "JPEG",
-        ".jpeg": "JPEG",
-        ".png": "PNG",
-        ".webp": "WEBP",
-    }[out_ext]
-
-    with Image.open(input_path) as img:
-        data = img.copy()
-        data.info.clear()
-        data.load()
-
-        tmp = _temp_path_for(output_path)
-        try:
-            if out_format == "JPEG":
-                data = data.convert("RGB")
-                data.save(
-                    tmp,
-                    format=out_format,
-                    exif=b"",
-                    icc_profile=None,
-                    optimize=True,
-                    progressive=True,
-                    quality=95,
-                )
-            elif out_format == "PNG":
-                data.save(tmp, format=out_format, optimize=True)
-            else:
-                data.save(tmp, format=out_format, exif=b"", icc_profile=None, quality=90, method=6)
-
-            os.replace(tmp, output_path)
-        finally:
-            if tmp.exists():
-                tmp.unlink(missing_ok=True)
-
-
-def _sanitize_pdf(input_path: Path, output_path: Path) -> list[str]:
-    reader = PdfReader(str(input_path))
-    warnings = _scan_pdf_risks(reader)
-    writer = PdfWriter()
-    for page in reader.pages:
-        writer.add_page(page)
-    writer.add_metadata({})
+    input_bytes = input_path.read_bytes()
+    sanitized = _sanitize_image_bytes(input_bytes, suffix=output_path.suffix.lower())
 
     tmp = _temp_path_for(output_path)
     try:
-        with tmp.open("wb") as fh:
-            writer.write(fh)
+        tmp.write_bytes(sanitized)
+        os.replace(tmp, output_path)
+    finally:
+        if tmp.exists():
+            tmp.unlink(missing_ok=True)
+
+
+def _sanitize_pdf(input_path: Path, output_path: Path) -> list[str]:
+    input_bytes = input_path.read_bytes()
+    sanitized, warnings = _sanitize_pdf_bytes(input_bytes)
+
+    tmp = _temp_path_for(output_path)
+    try:
+        tmp.write_bytes(sanitized)
         os.replace(tmp, output_path)
     finally:
         if tmp.exists():
@@ -290,6 +268,178 @@ def _sanitize_pdf(input_path: Path, output_path: Path) -> list[str]:
 def _scan_pdf_warnings(input_path: Path) -> list[str]:
     reader = PdfReader(str(input_path))
     return _scan_pdf_risks(reader)
+
+
+def _scan_zip_warnings(input_path: Path, *, options: SanitizeOptions) -> list[str]:
+    with zipfile.ZipFile(input_path, "r") as zip_in:
+        return _sanitize_zip_members(
+            zip_in,
+            zip_out=None,
+            copy_unsupported=options.copy_unsupported,
+        )
+
+
+def _sanitize_zip(input_path: Path, output_path: Path, *, options: SanitizeOptions) -> list[str]:
+    tmp = _temp_path_for(output_path)
+    try:
+        with zipfile.ZipFile(input_path, "r") as zip_in, zipfile.ZipFile(tmp, "w") as zip_out:
+            warnings = _sanitize_zip_members(
+                zip_in,
+                zip_out=zip_out,
+                copy_unsupported=options.copy_unsupported,
+            )
+        os.replace(tmp, output_path)
+    finally:
+        if tmp.exists():
+            tmp.unlink(missing_ok=True)
+    return warnings
+
+
+def _sanitize_zip_members(
+    zip_in: zipfile.ZipFile,
+    *,
+    zip_out: zipfile.ZipFile | None,
+    copy_unsupported: bool,
+) -> list[str]:
+    warnings: set[str] = set()
+    seen_names: set[str] = set()
+
+    infos = sorted(zip_in.infolist(), key=lambda info: _normalized_zip_name(info.filename))
+    for info in infos:
+        output_name = _normalized_zip_name(info.filename)
+        if not output_name:
+            warnings.add("zip has an empty entry name; skipped")
+            continue
+
+        if _is_unsafe_zip_name(output_name):
+            warnings.add(f"zip entry '{info.filename}' has unsafe path; skipped")
+            continue
+
+        if output_name in seen_names:
+            warnings.add(f"zip entry '{info.filename}' is duplicated; skipped")
+            continue
+        seen_names.add(output_name)
+
+        if _zipinfo_is_symlink(info):
+            warnings.add(f"zip entry '{info.filename}' is a symlink; skipped")
+            continue
+
+        if info.is_dir():
+            if zip_out is not None:
+                _write_zip_member(zip_out, info, output_name, b"")
+            continue
+
+        if info.flag_bits & 0x1:
+            warnings.add(f"zip entry '{info.filename}' is encrypted; skipped")
+            continue
+
+        data = zip_in.read(info)
+        suffix = Path(output_name).suffix.lower()
+
+        try:
+            if suffix in IMAGE_EXTS:
+                payload = _sanitize_image_bytes(data, suffix=suffix)
+            elif suffix in PDF_EXTS:
+                payload, pdf_warnings = _sanitize_pdf_bytes(data)
+                for warning in pdf_warnings:
+                    warnings.add(f"zip entry '{info.filename}': {warning}")
+            elif copy_unsupported:
+                payload = data
+                warnings.add(f"zip entry '{info.filename}' unsupported; copied as-is")
+            else:
+                warnings.add(f"zip entry '{info.filename}' unsupported; skipped")
+                continue
+        except Exception as exc:  # noqa: BLE001
+            warnings.add(f"zip entry '{info.filename}' failed to sanitize: {exc}; skipped")
+            continue
+
+        if zip_out is not None:
+            _write_zip_member(zip_out, info, output_name, payload)
+
+    return sorted(warnings)
+
+
+def _write_zip_member(
+    zip_out: zipfile.ZipFile, source_info: zipfile.ZipInfo, output_name: str, payload: bytes
+) -> None:
+    out_info = zipfile.ZipInfo(filename=output_name, date_time=source_info.date_time)
+    out_info.compress_type = source_info.compress_type
+    out_info.create_system = source_info.create_system
+    out_info.external_attr = source_info.external_attr
+    out_info.comment = source_info.comment
+    out_info.extra = source_info.extra
+    out_info.internal_attr = source_info.internal_attr
+    out_info.flag_bits = source_info.flag_bits & ~0x1
+    zip_out.writestr(out_info, payload)
+
+
+def _normalized_zip_name(name: str) -> str:
+    return name.replace("\\", "/")
+
+
+def _is_unsafe_zip_name(name: str) -> bool:
+    if name.startswith("/"):
+        return True
+    path = PurePosixPath(name)
+    if path.is_absolute():
+        return True
+    if path.parts and path.parts[0].endswith(":"):
+        return True
+    return ".." in path.parts
+
+
+def _zipinfo_is_symlink(info: zipfile.ZipInfo) -> bool:
+    mode = (info.external_attr >> 16) & 0o177777
+    return stat.S_ISLNK(mode)
+
+
+def _sanitize_image_bytes(input_bytes: bytes, *, suffix: str) -> bytes:
+    out_format = _image_format_for_suffix(suffix)
+    with Image.open(io.BytesIO(input_bytes)) as img:
+        data = img.copy()
+        data.info.clear()
+        data.load()
+
+    out = io.BytesIO()
+    if out_format == "JPEG":
+        data = data.convert("RGB")
+        data.save(
+            out,
+            format=out_format,
+            exif=b"",
+            icc_profile=None,
+            optimize=True,
+            progressive=True,
+            quality=95,
+        )
+    elif out_format == "PNG":
+        data.save(out, format=out_format, optimize=True)
+    else:
+        data.save(out, format=out_format, exif=b"", icc_profile=None, quality=90, method=6)
+    return out.getvalue()
+
+
+def _sanitize_pdf_bytes(input_bytes: bytes) -> tuple[bytes, list[str]]:
+    reader = PdfReader(io.BytesIO(input_bytes))
+    warnings = _scan_pdf_risks(reader)
+
+    writer = PdfWriter()
+    for page in reader.pages:
+        writer.add_page(page)
+    writer.add_metadata({})
+
+    out = io.BytesIO()
+    writer.write(out)
+    return out.getvalue(), warnings
+
+
+def _image_format_for_suffix(suffix: str) -> str:
+    return {
+        ".jpg": "JPEG",
+        ".jpeg": "JPEG",
+        ".png": "PNG",
+        ".webp": "WEBP",
+    }[suffix]
 
 
 def _scan_pdf_risks(reader: PdfReader) -> list[str]:
@@ -416,7 +566,8 @@ def _copy_atomic(input_path: Path, output_path: Path) -> None:
 
 
 def _validate_image_readable(input_path: Path) -> None:
-    with Image.open(input_path) as img:
+    input_bytes = input_path.read_bytes()
+    with Image.open(io.BytesIO(input_bytes)) as img:
         img.verify()
 
 
