@@ -22,6 +22,18 @@ from pypdf.generic import ArrayObject, DictionaryObject, IndirectObject
 IMAGE_EXTS = {".jpg", ".jpeg", ".png", ".webp"}
 PDF_EXTS = {".pdf"}
 ZIP_EXTS = {".zip"}
+OFFICE_OOXML_EXTS = {
+    ".docx",
+    ".xlsx",
+    ".pptx",
+    ".docm",
+    ".xlsm",
+    ".pptm",
+    ".dotm",
+    ".xltm",
+    ".potm",
+}
+OFFICE_MACRO_ENABLED_EXTS = {".docm", ".xlsm", ".pptm", ".dotm", ".xltm", ".potm"}
 
 DEFAULT_ZIP_MAX_MEMBERS = 10_000
 DEFAULT_ZIP_MAX_MEMBER_UNCOMPRESSED_BYTES = 64 * 1024 * 1024
@@ -220,6 +232,61 @@ def _compute_output_path(
     raise RuntimeError(f"unable to find available output path for {file}")
 
 
+def _scan_office_macro_indicators_path(path: Path) -> list[WarningItem]:
+    suffix = path.suffix.lower()
+    warnings: list[WarningItem] = []
+
+    if suffix in OFFICE_MACRO_ENABLED_EXTS:
+        warnings.append(
+            WarningItem(
+                code="office_macro_enabled",
+                message=f"office macro-enabled file type ({suffix}); macros are not removed",
+            )
+        )
+
+    if suffix in OFFICE_OOXML_EXTS:
+        try:
+            with zipfile.ZipFile(path, "r") as zf:
+                names = zf.namelist()
+        except Exception as exc:  # noqa: BLE001
+            warnings.append(
+                WarningItem(
+                    code="office_ooxml_scan_failed",
+                    message=f"office OOXML scan failed: {exc}",
+                )
+            )
+            return warnings
+
+        if any(name.lower().endswith("vbaproject.bin") for name in names):
+            warnings.append(
+                WarningItem(
+                    code="office_macro_indicator_vbaproject",
+                    message="office OOXML contains vbaProject.bin (macro indicator); not removed",
+                )
+            )
+
+    return warnings
+
+
+def _scan_office_macro_indicators_bytes(payload: bytes) -> list[WarningItem]:
+    try:
+        with zipfile.ZipFile(io.BytesIO(payload), "r") as zf:
+            names = zf.namelist()
+    except Exception as exc:  # noqa: BLE001
+        return [
+            WarningItem(code="office_ooxml_scan_failed", message=f"office OOXML scan failed: {exc}")
+        ]
+
+    if any(name.lower().endswith("vbaproject.bin") for name in names):
+        return [
+            WarningItem(
+                code="office_macro_indicator_vbaproject",
+                message="office OOXML contains vbaProject.bin (macro indicator); not removed",
+            )
+        ]
+    return []
+
+
 def _sanitize_file(input_path: Path, output_path: Path, *, options: SanitizeOptions) -> ReportItem:
     if not options.dry_run:
         output_path.parent.mkdir(parents=True, exist_ok=True)
@@ -240,6 +307,9 @@ def _sanitize_file(input_path: Path, output_path: Path, *, options: SanitizeOpti
     suffix = input_path.suffix.lower()
     warnings: list[WarningItem] = []
     try:
+        if suffix in OFFICE_OOXML_EXTS:
+            warnings.extend(_scan_office_macro_indicators_path(input_path))
+
         if suffix in IMAGE_EXTS:
             if options.dry_run:
                 _validate_image_readable(input_path)
@@ -528,6 +598,24 @@ def _sanitize_zip_members(
                     )
             elif options.copy_unsupported:
                 payload = data
+                if suffix in OFFICE_OOXML_EXTS:
+                    if suffix in OFFICE_MACRO_ENABLED_EXTS:
+                        warnings.add(
+                            WarningItem(
+                                code="office_macro_enabled",
+                                message=(
+                                    f"zip entry '{info.filename}': "
+                                    f"office macro-enabled file type ({suffix}); macros are not removed"
+                                ),
+                            )
+                        )
+                    for w in _scan_office_macro_indicators_bytes(data):
+                        warnings.add(
+                            WarningItem(
+                                code=w.code,
+                                message=f"zip entry '{info.filename}': {w.message}",
+                            )
+                        )
                 warnings.add(
                     WarningItem(
                         code="zip_entry_unsupported_copied",
@@ -535,6 +623,16 @@ def _sanitize_zip_members(
                     )
                 )
             else:
+                if suffix in OFFICE_MACRO_ENABLED_EXTS:
+                    warnings.add(
+                        WarningItem(
+                            code="office_macro_enabled",
+                            message=(
+                                f"zip entry '{info.filename}': "
+                                f"office macro-enabled file type ({suffix}); macros are not removed"
+                            ),
+                        )
+                    )
                 warnings.add(
                     WarningItem(
                         code="zip_entry_unsupported_skipped",

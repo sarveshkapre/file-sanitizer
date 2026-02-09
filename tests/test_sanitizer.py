@@ -122,6 +122,64 @@ def test_skip_unsupported_when_configured(tmp_path: Path) -> None:
     assert report.read_text(encoding="utf-8").strip() != ""
 
 
+def _make_ooxml_like_zip(path: Path, *, with_vba_project: bool) -> None:
+    with zipfile.ZipFile(path, "w") as zf:
+        zf.writestr("word/document.xml", "<w:document/>")
+        if with_vba_project:
+            zf.writestr("word/vbaProject.bin", b"not-a-real-vba")
+
+
+def test_office_macro_enabled_extension_warns(tmp_path: Path) -> None:
+    docm = tmp_path / "macro.docm"
+    _make_ooxml_like_zip(docm, with_vba_project=True)
+
+    out_dir = tmp_path / "out"
+    report = tmp_path / "report.jsonl"
+    rc = sanitize_path(docm, out_dir, report)
+    assert rc == 0
+
+    assert (out_dir / "macro.docm").exists()
+    item = json.loads(report.read_text(encoding="utf-8").strip())
+    codes = {w["code"] for w in item["warnings"]}
+    assert "office_macro_enabled" in codes
+    assert "office_macro_indicator_vbaproject" in codes
+
+
+def test_office_docx_with_vbaproject_warns(tmp_path: Path) -> None:
+    docx = tmp_path / "has-macro.docx"
+    _make_ooxml_like_zip(docx, with_vba_project=True)
+
+    out_dir = tmp_path / "out"
+    report = tmp_path / "report.jsonl"
+    rc = sanitize_path(docx, out_dir, report)
+    assert rc == 0
+
+    assert (out_dir / "has-macro.docx").exists()
+    item = json.loads(report.read_text(encoding="utf-8").strip())
+    codes = {w["code"] for w in item["warnings"]}
+    assert "office_macro_indicator_vbaproject" in codes
+
+
+def test_zip_member_office_macro_enabled_warns(tmp_path: Path) -> None:
+    office_payload = io.BytesIO()
+    with zipfile.ZipFile(office_payload, "w") as zf:
+        zf.writestr("word/document.xml", "<w:document/>")
+
+    outer = tmp_path / "outer.zip"
+    with zipfile.ZipFile(outer, "w") as zip_out:
+        zip_out.writestr("docs/macro.docm", office_payload.getvalue())
+
+    out_dir = tmp_path / "out"
+    report = tmp_path / "report.jsonl"
+    rc = sanitize_path(outer, out_dir, report)
+    assert rc == 0
+
+    item = json.loads(report.read_text(encoding="utf-8").strip())
+    warnings = item["warnings"]
+    assert any(w["code"] == "office_macro_enabled" for w in warnings)
+    assert any("zip entry 'docs/macro.docm'" in str(w["message"]) for w in warnings)
+
+
 def test_dry_run_does_not_write_outputs(tmp_path: Path) -> None:
     img_path = tmp_path / "test.jpg"
     Image.new("RGB", (10, 10), color="red").save(img_path)
