@@ -98,6 +98,7 @@
 - Market scan notes (2026-02-09, Cycle 3): ExifTool’s official docs emphasize broad metadata read/write coverage; “strip metadata” workflows typically combine deterministic CLI flags with policy about what to retain. https://exiftool.org/exiftool_pod2.html
 - Market scan notes (2026-02-09): pdfcpu advertises an explicit `sanitize` operation for PDFs; baseline expectation: PDF toolchains often have a dedicated sanitize step beyond metadata removal. https://pdfcpu.io/
 - Market scan notes (2026-02-09): ocrmypdf documents `--quiet` usage; baseline expectation: automation CLIs need a way to suppress non-essential stderr output when piping. https://ocrmypdf.readthedocs.io/en/latest/cookbook.html
+- Market scan notes (2026-02-10): OOXML packages store core document metadata (ex: creator, lastModifiedBy) in `docProps/core.xml`; metadata removal should explicitly target these docProps parts. https://c-rex.net/samples/ooxml/e1/Part1/OOXML_P1_Fundamentals_Core_topic_ID0ED3CO.html
 
 ## Notes
 - This file is maintained by the autonomous clone loop.
