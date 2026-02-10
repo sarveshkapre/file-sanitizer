@@ -231,6 +231,30 @@ def test_skip_unsupported_when_configured(tmp_path: Path) -> None:
     assert report.read_text(encoding="utf-8").strip() != ""
 
 
+def test_report_stdout_dash_does_not_skip_dash_named_file(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    # When writing the report to stdout ("-"), there is no report file path on disk.
+    # A real input file named "-" should still be processed.
+    (tmp_path / "-").write_text("hello", encoding="utf-8")
+    monkeypatch.chdir(tmp_path)
+
+    out_dir = tmp_path / "out"
+    rc = sanitize_path(
+        tmp_path,
+        out_dir,
+        Path("-"),
+        options=SanitizeOptions(dry_run=True),
+    )
+    assert rc == 0
+
+    out = capsys.readouterr().out.strip().splitlines()
+    items = [json.loads(line) for line in out if line.strip()]
+    dash_items = [item for item in items if item["input_path"] == str(tmp_path / "-")]
+    assert len(dash_items) == 1
+    assert dash_items[0]["action"] == "would_copy"
+
+
 def _make_ooxml_like_zip(path: Path, *, with_vba_project: bool) -> None:
     with zipfile.ZipFile(path, "w") as zf:
         zf.writestr("[Content_Types].xml", "<Types/>")

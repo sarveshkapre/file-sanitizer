@@ -165,8 +165,10 @@ def sanitize_path(
     allow_exts = _normalize_allow_exts(opts.allow_exts)
 
     report_to_stdout = str(report_path) == "-"
+    report_path_resolved: Path | None = None
     if not report_to_stdout:
         report_path.parent.mkdir(parents=True, exist_ok=True)
+        report_path_resolved = report_path.resolve(strict=False)
 
     error_count = 0
     reserved_outputs: set[Path] = set()
@@ -178,7 +180,6 @@ def sanitize_path(
     root_is_file_input = not input_path.is_dir()
     input_root_resolved = input_root.resolve(strict=False)
     out_dir_resolved = out_dir.resolve(strict=False)
-    report_path_resolved = report_path.resolve(strict=False)
 
     def _write_report(out: TextIO) -> None:
         nonlocal error_count, files_seen, bytes_seen, truncated_warning
@@ -362,7 +363,7 @@ def _sanitize_one(
     input_root_resolved: Path,
     out_dir: Path,
     out_dir_resolved: Path,
-    report_path_resolved: Path,
+    report_path_resolved: Path | None,
     reserved_outputs: set[Path],
     options: SanitizeOptions,
     exclude_globs: list[str],
@@ -387,7 +388,9 @@ def _sanitize_one(
             warnings=[WarningItem(code="symlink_skipped", message="symlink skipped")],
         )
 
-    if file.resolve() == report_path_resolved:
+    # Only skip the report file when we're actually writing to a file. When --report is "-",
+    # there is no report path on disk, and a real input file named "-" should be processed.
+    if report_path_resolved is not None and file.resolve() == report_path_resolved:
         return None
 
     if out_dir_resolved.is_relative_to(input_root_resolved) and file.resolve().is_relative_to(
