@@ -13,6 +13,8 @@
 - [ ] P2 (impact: med, effort: med, strategic fit: med, diff: low, risk: low, confidence: low): Expand image support beyond JPEG/PNG/WebP/TIFF (HEIC) behind an optional extra dependency (do not bloat base install).
 
 ## Implemented
+- [x] 2026-02-10: Add Office OOXML metadata stripping for `.docx/.xlsx/.pptx` (and macro-enabled variants) by sanitizing `docProps/*.xml` and dropping `docProps/thumbnail.*`, including for embedded OOXML files inside ZIP inputs.
+  Evidence: `src/file_sanitizer/sanitizer.py`, `tests/test_sanitizer.py`, `README.md`, `docs/report.md`, `make check`.
 - [x] 2026-02-09: Harden ZIP member reading with bounded streaming read limits to reduce zip-bomb/DoS risk (enforces uncompressed-byte caps while reading, not just via ZIP headers).
   Evidence: `src/file_sanitizer/sanitizer.py`, `make check`.
 - [x] 2026-02-09: Add `--quiet` to suppress human-readable stderr summaries (clean piping with `--report -`).
@@ -81,6 +83,7 @@
 - Fixture-backed binary tests catch parser/serialization regressions that synthetic-only tests may miss.
 - ZIP safety controls are most useful when enforced pre-decompression (metadata checks) with deterministic warning output.
 - Nested archive handling should be explicit policy, not implicit pass-through.
+- OOXML Office documents often store user-identifying metadata in `docProps/*` and may include content thumbnails (`docProps/thumbnail.*`); stripping these improves privacy without re-rendering document content.
 - Market scan notes (2026-02-09): MAT2 is a general-purpose metadata removal CLI; baseline expectation: multi-format support + automation-friendly usage. https://0xacab.org/jvoisin/mat2
 - Market scan notes (2026-02-09): ExifTool is the de-facto standard for inspecting/removing metadata from many file types; baseline expectation: deterministic scripting and broad format support. https://exiftool.org/
 - Market scan notes (2026-02-09): qpdf supports removing/clearing PDF metadata and deterministic output; baseline expectation: PDF metadata removal should be scriptable. https://qpdf.readthedocs.io/en/stable/cli.html

@@ -2,6 +2,23 @@
 
 ## Decision Log
 
+### 2026-02-10 - Office OOXML metadata stripping (docProps) and embedded OOXML sanitization inside ZIP inputs
+- Decision: Treat OOXML Office documents (`.docx/.xlsx/.pptx` and macro-enabled variants) as supported inputs and sanitize their `docProps/*.xml` metadata parts (core/app/custom) while dropping `docProps/thumbnail.*`; extend ZIP sanitization to sanitize embedded OOXML members using the same logic.
+- Why: Office files commonly include user-identifying metadata (author/tool/timestamps) and thumbnails that can leak document content; stripping these parts improves privacy and matches user expectations for a "metadata sanitizer" without requiring a full render-to-pixels workflow.
+- Evidence:
+  - Code: `src/file_sanitizer/sanitizer.py`
+  - Docs: `README.md`, `docs/report.md`, `CHANGELOG.md`
+  - Tests: `tests/test_sanitizer.py` (OOXML docProps/thumbnail regression; embedded `.docx` inside `.zip`)
+  - Verification: `make check` (pass, `50 passed`)
+  - Smoke:
+    - `.venv/bin/python -m file_sanitizer sanitize --input tests/fixtures/mixed-bundle.zip --out "$tmpdir/out" --report "$tmpdir/report.jsonl" --report-summary --quiet` (pass, `rc=0`)
+    - `.venv/bin/python -m file_sanitizer sanitize --input "$tmpdir/meta.docx" --out "$tmpdir/out" --report "$tmpdir/report.jsonl" --quiet` (pass, `action=office_sanitized`; output `.docx` contains no `docProps/thumbnail.*`)
+- Commits:
+  - Feature + tests: `df8ac571ad21df2afce11cb93ba3cb04107e3806`
+  - Docs: `0db2cb6923b04b5adba8147ef044e9235f2f3fbd`
+- Confidence: High
+- Trust label: verified-local
+
 ### 2026-02-09 - Bound ZIP member reads to enforce uncompressed-byte limits during streaming read
 - Decision: Read ZIP members via a bounded streaming reader (hard cap) instead of `ZipFile.read()` to ensure uncompressed-byte guardrails hold even if ZIP headers lie about sizes.
 - Why: ZIP safety controls based only on declared metadata can be bypassed with malformed entries; bounding the actual read reduces zip-bomb/DoS risk on untrusted drops.
