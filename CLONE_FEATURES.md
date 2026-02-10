@@ -13,6 +13,8 @@
 - [ ] P2 (impact: med, effort: med, strategic fit: med, diff: low, risk: low, confidence: low): Expand image support beyond JPEG/PNG/WebP/TIFF (HEIC) behind an optional extra dependency (do not bloat base install).
 
 ## Implemented
+- [x] 2026-02-10: Fix stdout report mode (`--report -`) to not skip a real input file named `-` (report-file skipping now only applies when writing to a report path on disk).
+  Evidence: `src/file_sanitizer/sanitizer.py`, `tests/test_sanitizer.py`, `make check`.
 - [x] 2026-02-10: Add Office OOXML metadata stripping for `.docx/.xlsx/.pptx` (and macro-enabled variants) by sanitizing `docProps/*.xml` and dropping `docProps/thumbnail.*`, including for embedded OOXML files inside ZIP inputs.
   Evidence: `src/file_sanitizer/sanitizer.py`, `tests/test_sanitizer.py`, `README.md`, `docs/report.md`, `make check`.
 - [x] 2026-02-09: Harden ZIP member reading with bounded streaming read limits to reduce zip-bomb/DoS risk (enforces uncompressed-byte caps while reading, not just via ZIP headers).

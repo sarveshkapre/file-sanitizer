@@ -2,6 +2,17 @@
 
 ## Decision Log
 
+### 2026-02-10 - Stdout report mode should not skip a real input file named `-`
+- Decision: When `report_path` is `"-"` (stdout mode), do not apply report-file skipping logic against a resolved `Path("-")`; only skip the report file when writing to an on-disk report path.
+- Why: In stdout mode there is no report file on disk, so skipping an input path named `-` is incorrect and surprising; this also removes an unnecessary `Path.resolve()` in stdout mode.
+- Evidence:
+  - Code: `src/file_sanitizer/sanitizer.py`
+  - Tests: `tests/test_sanitizer.py` (regression for `input=.` containing a file named `-` with `report_path="-"`)
+  - Verification: `make check` (pass, `51 passed`)
+- Commit: `a9d7b90a84ee097a75d83c64760c1ff73e499573`
+- Confidence: High
+- Trust label: verified-local
+
 ### 2026-02-10 - Office OOXML metadata stripping (docProps) and embedded OOXML sanitization inside ZIP inputs
 - Decision: Treat OOXML Office documents (`.docx/.xlsx/.pptx` and macro-enabled variants) as supported inputs and sanitize their `docProps/*.xml` metadata parts (core/app/custom) while dropping `docProps/thumbnail.*`; extend ZIP sanitization to sanitize embedded OOXML members using the same logic.
 - Why: Office files commonly include user-identifying metadata (author/tool/timestamps) and thumbnails that can leak document content; stripping these parts improves privacy and matches user expectations for a "metadata sanitizer" without requiring a full render-to-pixels workflow.
