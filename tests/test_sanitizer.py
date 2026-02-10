@@ -239,6 +239,41 @@ def _make_ooxml_like_zip(path: Path, *, with_vba_project: bool) -> None:
             zf.writestr("word/vbaProject.bin", b"not-a-real-vba")
 
 
+def _make_ooxml_with_docprops(path: Path, *, creator: str = "alice", with_thumbnail: bool) -> None:
+    core = (
+        '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>\n'
+        "<cp:coreProperties "
+        'xmlns:cp="http://schemas.openxmlformats.org/package/2006/metadata/core-properties" '
+        'xmlns:dc="http://purl.org/dc/elements/1.1/" '
+        'xmlns:dcterms="http://purl.org/dc/terms/" '
+        'xmlns:dcmitype="http://purl.org/dc/dcmitype/" '
+        'xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance">'
+        f"<dc:creator>{creator}</dc:creator>"
+        "</cp:coreProperties>"
+    )
+    app = (
+        '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>\n'
+        '<Properties xmlns="http://schemas.openxmlformats.org/officeDocument/2006/extended-properties">'
+        "<Application>Microsoft Office</Application>"
+        "</Properties>"
+    )
+    custom = (
+        '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>\n'
+        '<Properties xmlns="http://schemas.openxmlformats.org/officeDocument/2006/custom-properties" '
+        'xmlns:vt="http://schemas.openxmlformats.org/officeDocument/2006/docPropsVTypes">'
+        "</Properties>"
+    )
+
+    with zipfile.ZipFile(path, "w") as zf:
+        zf.writestr("[Content_Types].xml", "<Types/>")
+        zf.writestr("word/document.xml", "<w:document/>")
+        zf.writestr("docProps/core.xml", core)
+        zf.writestr("docProps/app.xml", app)
+        zf.writestr("docProps/custom.xml", custom)
+        if with_thumbnail:
+            zf.writestr("docProps/thumbnail.jpeg", b"fake-thumb")
+
+
 def test_office_macro_enabled_extension_warns(tmp_path: Path) -> None:
     docm = tmp_path / "macro.docm"
     _make_ooxml_like_zip(docm, with_vba_project=True)
@@ -268,6 +303,58 @@ def test_office_docx_with_vbaproject_warns(tmp_path: Path) -> None:
     item = json.loads(report.read_text(encoding="utf-8").strip())
     codes = {w["code"] for w in item["warnings"]}
     assert "office_macro_indicator_vbaproject" in codes
+
+
+def test_office_sanitize_strips_docprops_and_thumbnail(tmp_path: Path) -> None:
+    docx = tmp_path / "meta.docx"
+    _make_ooxml_with_docprops(docx, creator="Alice", with_thumbnail=True)
+
+    out_dir = tmp_path / "out"
+    report = tmp_path / "report.jsonl"
+    rc = sanitize_path(docx, out_dir, report)
+    assert rc == 0
+
+    out_docx = out_dir / "meta.docx"
+    assert out_docx.exists()
+
+    item = json.loads(report.read_text(encoding="utf-8").strip())
+    assert item["action"] == "office_sanitized"
+    assert item["warnings"] == []
+
+    with zipfile.ZipFile(out_docx, "r") as zf:
+        names = set(zf.namelist())
+        assert "docProps/core.xml" in names
+        assert "docProps/app.xml" in names
+        assert "docProps/custom.xml" in names
+        assert "docProps/thumbnail.jpeg" not in names
+        core = zf.read("docProps/core.xml").decode("utf-8", errors="replace")
+        assert "Alice" not in core
+        assert "creator" not in core.lower()
+
+
+def test_zip_sanitize_sanitizes_embedded_ooxml_members(tmp_path: Path) -> None:
+    docx = tmp_path / "meta.docx"
+    _make_ooxml_with_docprops(docx, creator="Bob", with_thumbnail=True)
+
+    outer = tmp_path / "bundle.zip"
+    with zipfile.ZipFile(outer, "w") as zf:
+        zf.writestr("docs/meta.docx", docx.read_bytes())
+
+    out_dir = tmp_path / "out"
+    report = tmp_path / "report.jsonl"
+    rc = sanitize_path(outer, out_dir, report)
+    assert rc == 0
+
+    out_zip = out_dir / "bundle.zip"
+    assert out_zip.exists()
+
+    with zipfile.ZipFile(out_zip, "r") as zf:
+        payload = zf.read("docs/meta.docx")
+    with zipfile.ZipFile(io.BytesIO(payload), "r") as inner:
+        names = set(inner.namelist())
+        assert "docProps/thumbnail.jpeg" not in names
+        core = inner.read("docProps/core.xml").decode("utf-8", errors="replace")
+        assert "Bob" not in core
 
 
 def test_content_type_sniffing_sanitizes_pdf_even_with_wrong_extension(tmp_path: Path) -> None:
@@ -333,7 +420,7 @@ def test_content_type_sniffing_detects_ooxml_inside_zip_container(tmp_path: Path
     assert (out_dir / "macro.bin").exists()
 
     item = json.loads(report.read_text(encoding="utf-8").strip())
-    assert item["action"] == "copied"
+    assert item["action"] == "office_sanitized"
     codes = {w["code"] for w in item["warnings"]}
     assert "content_type_detected_ooxml" in codes
     assert "office_macro_indicator_vbaproject" in codes

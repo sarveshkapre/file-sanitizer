@@ -47,6 +47,27 @@ RISKY_POLICIES = {"warn", "block"}
 REPORT_VERSION = 1
 
 
+_OOXML_CORE_XML_MINIMAL = (
+    b'<?xml version="1.0" encoding="UTF-8" standalone="yes"?>\n'
+    b"<cp:coreProperties "
+    b'xmlns:cp="http://schemas.openxmlformats.org/package/2006/metadata/core-properties" '
+    b'xmlns:dc="http://purl.org/dc/elements/1.1/" '
+    b'xmlns:dcterms="http://purl.org/dc/terms/" '
+    b'xmlns:dcmitype="http://purl.org/dc/dcmitype/" '
+    b'xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"/>'
+)
+_OOXML_APP_XML_MINIMAL = (
+    b'<?xml version="1.0" encoding="UTF-8" standalone="yes"?>\n'
+    b'<Properties xmlns="http://schemas.openxmlformats.org/officeDocument/2006/extended-properties"/>'
+)
+_OOXML_CUSTOM_XML_MINIMAL = (
+    b'<?xml version="1.0" encoding="UTF-8" standalone="yes"?>\n'
+    b"<Properties "
+    b'xmlns="http://schemas.openxmlformats.org/officeDocument/2006/custom-properties" '
+    b'xmlns:vt="http://schemas.openxmlformats.org/officeDocument/2006/docPropsVTypes"/>'
+)
+
+
 @dataclass(frozen=True)
 class SanitizeOptions:
     flat_output: bool = False
@@ -114,6 +135,7 @@ def _is_risky_warning(w: WarningItem) -> bool:
         "office_macro_enabled",
         "office_macro_indicator_vbaproject",
         "office_ooxml_scan_failed",
+        "office_ooxml_sanitize_failed",
     }:
         return True
     if w.code.startswith("zip_"):
@@ -590,6 +612,54 @@ def _sanitize_file(
                     warnings,
                 )
 
+            if detected == "zip":
+                if options.dry_run:
+                    try:
+                        with zipfile.ZipFile(input_path, "r") as zf:
+                            warnings.extend(
+                                _sanitize_ooxml_members(zf, zip_out=None, options=options)
+                            )
+                    except Exception as exc:  # noqa: BLE001
+                        warnings.append(
+                            WarningItem(
+                                code="office_ooxml_sanitize_failed",
+                                message=f"office OOXML sanitize failed: {exc}",
+                            )
+                        )
+                        # Fall through to default unsupported handling (copy/skip) so dry-run
+                        # remains informative and behavior stays consistent with policy flags.
+                    else:
+                        if options.risky_policy == "block" and _has_risky_findings(warnings):
+                            warnings.append(_policy_blocked_warning())
+                            return ReportItem(str(input_path), None, "would_block", warnings)
+                        return ReportItem(
+                            str(input_path),
+                            str(output_path),
+                            "would_office_sanitize",
+                            warnings,
+                        )
+                else:
+                    try:
+                        warnings.extend(_sanitize_ooxml(input_path, output_path, options=options))
+                    except BlockedByPolicy:
+                        raise
+                    except Exception as exc:  # noqa: BLE001
+                        warnings.append(
+                            WarningItem(
+                                code="office_ooxml_sanitize_failed",
+                                message=f"office OOXML sanitize failed: {exc}",
+                            )
+                        )
+                        # Fall back to unsupported handling (copy/skip). Consumers can enforce
+                        # strict behavior via --fail-on-warnings and/or --risky-policy block.
+                    else:
+                        return ReportItem(
+                            str(input_path),
+                            str(output_path),
+                            "office_sanitized",
+                            warnings,
+                        )
+
         if suffix in IMAGE_EXTS:
             if options.dry_run:
                 _validate_image_readable(input_path)
@@ -766,6 +836,217 @@ def _sanitize_zip(
         if tmp.exists():
             tmp.unlink(missing_ok=True)
     return warnings
+
+
+def _sanitize_ooxml(
+    input_path: Path, output_path: Path, *, options: SanitizeOptions
+) -> list[WarningItem]:
+    tmp = _temp_path_for(output_path)
+    try:
+        with zipfile.ZipFile(input_path, "r") as zip_in, zipfile.ZipFile(tmp, "w") as zip_out:
+            warnings = _sanitize_ooxml_members(zip_in, zip_out=zip_out, options=options)
+        if options.risky_policy == "block" and _has_risky_findings(warnings):
+            raise BlockedByPolicy(warnings=warnings)
+        os.replace(tmp, output_path)
+    finally:
+        if tmp.exists():
+            tmp.unlink(missing_ok=True)
+    return warnings
+
+
+def _sanitize_ooxml_bytes(
+    payload: bytes, *, options: SanitizeOptions
+) -> tuple[bytes, list[WarningItem]]:
+    buf = io.BytesIO(payload)
+    out = io.BytesIO()
+    with zipfile.ZipFile(buf, "r") as zip_in, zipfile.ZipFile(out, "w") as zip_out:
+        warnings = _sanitize_ooxml_members(zip_in, zip_out=zip_out, options=options)
+    return out.getvalue(), warnings
+
+
+def _ooxml_sanitized_docprops_payload(name: str) -> bytes | None:
+    if name == "docProps/core.xml":
+        return _OOXML_CORE_XML_MINIMAL
+    if name == "docProps/app.xml":
+        return _OOXML_APP_XML_MINIMAL
+    if name == "docProps/custom.xml":
+        return _OOXML_CUSTOM_XML_MINIMAL
+    return None
+
+
+def _sanitize_ooxml_members(
+    zip_in: zipfile.ZipFile,
+    *,
+    zip_out: zipfile.ZipFile | None,
+    options: SanitizeOptions,
+) -> list[WarningItem]:
+    warnings: set[WarningItem] = set()
+    seen_names: set[str] = set()
+    total_expanded_bytes = 0
+
+    infos = sorted(zip_in.infolist(), key=lambda info: _normalized_zip_name(info.filename))
+    if len(infos) > options.zip_max_members:
+        warnings.add(
+            WarningItem(
+                code="zip_entries_truncated",
+                message=(
+                    f"office OOXML container has {len(infos)} entries; processing limited to "
+                    f"{options.zip_max_members} by policy"
+                ),
+            )
+        )
+        infos = infos[: options.zip_max_members]
+
+    for info in infos:
+        output_name = _normalized_zip_name(info.filename)
+        if not output_name:
+            warnings.add(
+                WarningItem(
+                    code="zip_entry_empty_name",
+                    message="office OOXML container has an empty entry name; skipped",
+                )
+            )
+            continue
+
+        if _is_unsafe_zip_name(output_name):
+            warnings.add(
+                WarningItem(
+                    code="zip_entry_unsafe_path",
+                    message=f"office OOXML entry '{info.filename}' has unsafe path; skipped",
+                )
+            )
+            continue
+
+        if output_name in seen_names:
+            warnings.add(
+                WarningItem(
+                    code="zip_entry_duplicate",
+                    message=f"office OOXML entry '{info.filename}' is duplicated; skipped",
+                )
+            )
+            continue
+        seen_names.add(output_name)
+
+        if _zipinfo_is_symlink(info):
+            warnings.add(
+                WarningItem(
+                    code="zip_entry_symlink",
+                    message=f"office OOXML entry '{info.filename}' is a symlink; skipped",
+                )
+            )
+            continue
+
+        if info.is_dir():
+            if zip_out is not None:
+                _write_zip_member(zip_out, info, output_name, b"")
+            continue
+
+        if info.flag_bits & 0x1:
+            warnings.add(
+                WarningItem(
+                    code="zip_entry_encrypted",
+                    message=f"office OOXML entry '{info.filename}' is encrypted; skipped",
+                )
+            )
+            continue
+
+        if output_name.lower().startswith("docprops/thumbnail."):
+            # Thumbnails can leak document contents. Drop them entirely.
+            continue
+
+        expanded_size = max(int(info.file_size), 0)
+        if expanded_size > options.zip_max_member_uncompressed_bytes:
+            warnings.add(
+                WarningItem(
+                    code="zip_entry_oversize",
+                    message=(
+                        f"office OOXML entry '{info.filename}' expanded size {expanded_size} exceeds "
+                        f"limit {options.zip_max_member_uncompressed_bytes}; skipped"
+                    ),
+                )
+            )
+            continue
+
+        compressed_size = max(int(info.compress_size), 0)
+        ratio = _zip_compression_ratio(expanded_size, compressed_size)
+        if ratio > options.zip_max_compression_ratio:
+            warnings.add(
+                WarningItem(
+                    code="zip_entry_compression_ratio_exceeded",
+                    message=(
+                        f"office OOXML entry '{info.filename}' compression ratio {_format_ratio(ratio)} exceeds "
+                        f"limit {_format_ratio(options.zip_max_compression_ratio)}; skipped"
+                    ),
+                )
+            )
+            continue
+
+        if total_expanded_bytes + expanded_size > options.zip_max_total_uncompressed_bytes:
+            warnings.add(
+                WarningItem(
+                    code="zip_total_expanded_limit_exceeded",
+                    message=(
+                        "office OOXML expanded size limit exceeded "
+                        f"({options.zip_max_total_uncompressed_bytes} bytes); "
+                        f"entry '{info.filename}' and remaining data may be skipped"
+                    ),
+                )
+            )
+            continue
+
+        remaining_total = options.zip_max_total_uncompressed_bytes - total_expanded_bytes
+        if remaining_total <= 0:
+            warnings.add(
+                WarningItem(
+                    code="zip_total_expanded_limit_exceeded",
+                    message=(
+                        "office OOXML expanded size limit exceeded "
+                        f"({options.zip_max_total_uncompressed_bytes} bytes); "
+                        f"entry '{info.filename}' and remaining data may be skipped"
+                    ),
+                )
+            )
+            continue
+
+        read_limit = min(options.zip_max_member_uncompressed_bytes, remaining_total)
+        try:
+            data = _read_zip_member_bounded(zip_in, info, max_uncompressed_bytes=read_limit)
+        except _ZipMemberTooLarge:
+            if remaining_total < options.zip_max_member_uncompressed_bytes:
+                warnings.add(
+                    WarningItem(
+                        code="zip_total_expanded_limit_exceeded",
+                        message=(
+                            "office OOXML expanded size limit exceeded "
+                            f"({options.zip_max_total_uncompressed_bytes} bytes); "
+                            f"entry '{info.filename}' skipped"
+                        ),
+                    )
+                )
+            else:
+                warnings.add(
+                    WarningItem(
+                        code="zip_entry_oversize",
+                        message=(
+                            f"office OOXML entry '{info.filename}' expanded size exceeds "
+                            f"limit {options.zip_max_member_uncompressed_bytes}; skipped"
+                        ),
+                    )
+                )
+            continue
+
+        total_expanded_bytes += len(data)
+
+        sanitized_docprops = _ooxml_sanitized_docprops_payload(output_name)
+        if sanitized_docprops is not None:
+            if zip_out is not None:
+                _write_zip_member(zip_out, info, output_name, sanitized_docprops)
+            continue
+
+        if zip_out is not None:
+            _write_zip_member(zip_out, info, output_name, data)
+
+    return sorted(warnings, key=lambda w: (w.code, w.message))
 
 
 def _sanitize_zip_members(
@@ -1030,7 +1311,58 @@ def _sanitize_zip_members(
 
             total_expanded_bytes += len(data)
 
-            if suffix in IMAGE_EXTS:
+            if suffix in OFFICE_OOXML_EXTS:
+                if suffix in OFFICE_MACRO_ENABLED_EXTS:
+                    warnings.add(
+                        WarningItem(
+                            code="office_macro_enabled",
+                            message=(
+                                f"zip entry '{info.filename}': "
+                                f"office macro-enabled file type ({suffix}); macros are not removed"
+                            ),
+                        )
+                    )
+                for w in _scan_office_macro_indicators_bytes(data):
+                    warnings.add(
+                        WarningItem(
+                            code=w.code,
+                            message=f"zip entry '{info.filename}': {w.message}",
+                        )
+                    )
+                try:
+                    payload, office_warnings = _sanitize_ooxml_bytes(data, options=options)
+                except Exception as exc:  # noqa: BLE001
+                    warnings.add(
+                        WarningItem(
+                            code="office_ooxml_sanitize_failed",
+                            message=f"zip entry '{info.filename}': office OOXML sanitize failed: {exc}",
+                        )
+                    )
+                    if options.copy_unsupported:
+                        payload = data
+                        warnings.add(
+                            WarningItem(
+                                code="zip_entry_unsupported_copied",
+                                message=f"zip entry '{info.filename}' unsupported; copied as-is",
+                            )
+                        )
+                    else:
+                        warnings.add(
+                            WarningItem(
+                                code="zip_entry_unsupported_skipped",
+                                message=f"zip entry '{info.filename}' unsupported; skipped",
+                            )
+                        )
+                        continue
+                else:
+                    for w in office_warnings:
+                        warnings.add(
+                            WarningItem(
+                                code=w.code,
+                                message=f"zip entry '{info.filename}': {w.message}",
+                            )
+                        )
+            elif suffix in IMAGE_EXTS:
                 payload = _sanitize_image_bytes(data, suffix=suffix)
             elif suffix in PDF_EXTS:
                 payload, pdf_warnings = _sanitize_pdf_bytes(data)
@@ -1043,24 +1375,6 @@ def _sanitize_zip_members(
                     )
             elif options.copy_unsupported:
                 payload = data
-                if suffix in OFFICE_OOXML_EXTS:
-                    if suffix in OFFICE_MACRO_ENABLED_EXTS:
-                        warnings.add(
-                            WarningItem(
-                                code="office_macro_enabled",
-                                message=(
-                                    f"zip entry '{info.filename}': "
-                                    f"office macro-enabled file type ({suffix}); macros are not removed"
-                                ),
-                            )
-                        )
-                    for w in _scan_office_macro_indicators_bytes(data):
-                        warnings.add(
-                            WarningItem(
-                                code=w.code,
-                                message=f"zip entry '{info.filename}': {w.message}",
-                            )
-                        )
                 warnings.add(
                     WarningItem(
                         code="zip_entry_unsupported_copied",
