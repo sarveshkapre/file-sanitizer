@@ -14,6 +14,7 @@
 - Add `--quiet` to suppress human-readable stderr summary output.
 - Add warning taxonomy (`code` + `message`) in JSONL report warnings for machine-actionable policy decisions.
 - Add Office macro detection warnings for OOXML macro-enabled documents and `vbaProject.bin` indicators.
+- Add Office OOXML metadata stripping for `.docx/.xlsx/.pptx` (and macro-enabled variants) by sanitizing `docProps/*.xml` and dropping `docProps/thumbnail.*` (including for embedded OOXML files inside ZIP inputs).
 - Add `--risky-policy` (`warn` vs `block`) to optionally block writing outputs for risky PDF/ZIP/Office findings.
 - `--dry-run` no longer creates output directories unless needed for the report path.
 - Avoid re-processing newly written outputs when `--out` is inside the input tree.

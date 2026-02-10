@@ -13,6 +13,7 @@ One-line pitch: A fast, local CLI to sanitize files by stripping common metadata
 - ZIP member hardening warnings (unsafe paths, symlinks, encrypted/duplicate entries are skipped).
 - ZIP bomb guardrails (entry count, per-entry size, total expanded bytes, compression ratio) with configurable limits.
 - Nested ZIP member policy (`skip` default, optional `copy`) to reduce nested archive propagation risk.
+- Office OOXML metadata stripping for `.docx/.xlsx/.pptx` (and macro-enabled variants) by sanitizing `docProps/*.xml` and dropping `docProps/thumbnail.*` (including for embedded OOXML files inside ZIP inputs).
 - CLI flags for safer runs: `--flat`, `--[no-]overwrite`, `--[no-]copy-unsupported`, `--dry-run`.
 - ZIP safety tuning flags: `--zip-max-members`, `--zip-max-member-bytes`, `--zip-max-total-bytes`, `--zip-max-compression-ratio`, `--nested-archive-policy`.
 - Summary stats printed to stderr (counts by action).
@@ -26,9 +27,8 @@ One-line pitch: A fast, local CLI to sanitize files by stripping common metadata
 
 ## Next
 
-- Office document macro detection with clear warning taxonomy.
-- Trust policy mode (`warn` vs `block`) for risky PDF/ZIP findings.
-- Performance benchmark coverage for large directory and ZIP workloads.
+- CI-friendly benchmark/regression coverage for large directory and ZIP workloads.
+- Optional recursive nested-archive sanitization with depth/size budgets.
 
 ## Top Risks / Unknowns
 

@@ -29,6 +29,7 @@ Non-dry-run actions:
 - `image_sanitized`
 - `pdf_sanitized`
 - `zip_sanitized`
+- `office_sanitized`
 - `copied`
 - `skipped`
 - `excluded`
@@ -41,6 +42,7 @@ Dry-run actions:
 - `would_image_sanitize`
 - `would_pdf_sanitize`
 - `would_zip_sanitize`
+- `would_office_sanitize`
 - `would_copy`
 - `would_skip`
 - `would_block`

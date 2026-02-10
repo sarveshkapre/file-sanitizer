@@ -6,6 +6,7 @@ Local file sanitizer that removes common metadata from images and PDFs.
 
 - Strip EXIF from images.
 - Remove PDF metadata.
+- Strip common Office OOXML metadata (`docProps/*`) and drop `docProps/thumbnail.*` for `.docx/.xlsx/.pptx` (and macro-enabled variants).
 - Sanitize ZIP archives by sanitizing supported members and filtering unsafe members.
 - JSONL report output.
 - Preserve directory structure by default (avoids filename collisions).

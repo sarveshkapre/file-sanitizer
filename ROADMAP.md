@@ -4,9 +4,13 @@
 
 - Image EXIF removal + PDF metadata stripping.
 
+## v0.1.1 (Unreleased)
+
+- Office OOXML metadata stripping for `.docx/.xlsx/.pptx` (and macro-enabled variants).
+
 ## Next
 
-- Office document macro detection.
-- Trust policy mode (`warn` vs `block`) for risky PDF/ZIP findings.
-- Warning taxonomy (`code` + `message`) for machine-actionable policy decisions.
-- Performance benchmark coverage for very large directory and ZIP inputs.
+- CI-friendly benchmark/regression coverage for very large directory and ZIP inputs.
+- Optional recursive nested-archive sanitization with depth/size budgets.
+- Optional run-level metadata record at the start of the JSONL report (distinct from summary).
+- Optional HEIC image support behind an extra dependency.
