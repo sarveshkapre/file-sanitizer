@@ -40,7 +40,9 @@ DEFAULT_ZIP_MAX_MEMBERS = 10_000
 DEFAULT_ZIP_MAX_MEMBER_UNCOMPRESSED_BYTES = 64 * 1024 * 1024
 DEFAULT_ZIP_MAX_TOTAL_UNCOMPRESSED_BYTES = 512 * 1024 * 1024
 DEFAULT_ZIP_MAX_COMPRESSION_RATIO = 100.0
-NESTED_ARCHIVE_POLICIES = {"skip", "copy"}
+DEFAULT_NESTED_ARCHIVE_MAX_DEPTH = 3
+DEFAULT_NESTED_ARCHIVE_MAX_TOTAL_UNCOMPRESSED_BYTES = 128 * 1024 * 1024
+NESTED_ARCHIVE_POLICIES = {"skip", "copy", "sanitize"}
 RISKY_POLICIES = {"warn", "block"}
 
 # JSONL report schema version (bump on backward-incompatible schema changes).
@@ -84,6 +86,10 @@ class SanitizeOptions:
     zip_max_total_uncompressed_bytes: int = DEFAULT_ZIP_MAX_TOTAL_UNCOMPRESSED_BYTES
     zip_max_compression_ratio: float = DEFAULT_ZIP_MAX_COMPRESSION_RATIO
     nested_archive_policy: str = "skip"
+    nested_archive_max_depth: int = DEFAULT_NESTED_ARCHIVE_MAX_DEPTH
+    nested_archive_max_total_uncompressed_bytes: int = (
+        DEFAULT_NESTED_ARCHIVE_MAX_TOTAL_UNCOMPRESSED_BYTES
+    )
     risky_policy: str = "warn"
 
 
@@ -126,6 +132,11 @@ class TraversalItem:
     kind: str  # "file" | "excluded_dir"
     path: Path
     excluded_glob: str | None = None
+
+
+@dataclass
+class _NestedArchiveBudget:
+    used_uncompressed_bytes: int = 0
 
 
 def _is_risky_warning(w: WarningItem) -> bool:
@@ -294,6 +305,10 @@ def _validate_options(options: SanitizeOptions) -> None:
     if options.nested_archive_policy not in NESTED_ARCHIVE_POLICIES:
         allowed = ", ".join(sorted(NESTED_ARCHIVE_POLICIES))
         raise ValueError(f"nested_archive_policy must be one of: {allowed}")
+    if options.nested_archive_max_depth < 1:
+        raise ValueError("nested_archive_max_depth must be >= 1")
+    if options.nested_archive_max_total_uncompressed_bytes < 1:
+        raise ValueError("nested_archive_max_total_uncompressed_bytes must be >= 1")
     if options.risky_policy not in RISKY_POLICIES:
         allowed = ", ".join(sorted(RISKY_POLICIES))
         raise ValueError(f"risky_policy must be one of: {allowed}")
@@ -583,7 +598,7 @@ def _sanitize_file(
 
     is_zip_by_ext = suffix in ZIP_EXTS
     is_zip_by_magic = detected == "zip" and not is_office
-    if is_zip_by_ext and detected in {"pdf", "jpeg", "png", "webp"}:
+    if is_zip_by_ext and detected in {"pdf", "jpeg", "png", "webp", "tiff"}:
         warnings.append(
             WarningItem(
                 code="content_type_mismatch",
@@ -749,12 +764,30 @@ def _sniff_magic_bytes(head: bytes) -> str | None:
         return "png"
     if len(head) >= 12 and head[:4] == b"RIFF" and head[8:12] == b"WEBP":
         return "webp"
+    if head.startswith((b"II*\x00", b"MM\x00*")):
+        return "tiff"
     return None
 
 
 def _zip_looks_like_ooxml(path: Path) -> bool:
     try:
         with zipfile.ZipFile(path, "r") as zf:
+            names = set(zf.namelist())
+    except Exception:  # noqa: BLE001
+        return False
+
+    if "[Content_Types].xml" not in names:
+        return False
+
+    for prefix in ("word/", "xl/", "ppt/"):
+        if any(name.startswith(prefix) for name in names):
+            return True
+    return False
+
+
+def _zip_bytes_looks_like_ooxml(payload: bytes) -> bool:
+    try:
+        with zipfile.ZipFile(io.BytesIO(payload), "r") as zf:
             names = set(zf.namelist())
     except Exception:  # noqa: BLE001
         return False
@@ -807,12 +840,15 @@ def _scan_pdf_warnings(input_path: Path) -> list[WarningItem]:
 def _scan_zip_warnings(
     input_path: Path, *, options: SanitizeOptions, allow_exts: frozenset[str] | None
 ) -> list[WarningItem]:
+    nested_budget = _NestedArchiveBudget()
     with zipfile.ZipFile(input_path, "r") as zip_in:
         return _sanitize_zip_members(
             zip_in,
             zip_out=None,
             options=options,
             allow_exts=allow_exts,
+            nested_depth=0,
+            nested_budget=nested_budget,
         )
 
 
@@ -824,6 +860,7 @@ def _sanitize_zip(
     allow_exts: frozenset[str] | None,
 ) -> list[WarningItem]:
     tmp = _temp_path_for(output_path)
+    nested_budget = _NestedArchiveBudget()
     try:
         with zipfile.ZipFile(input_path, "r") as zip_in, zipfile.ZipFile(tmp, "w") as zip_out:
             warnings = _sanitize_zip_members(
@@ -831,6 +868,8 @@ def _sanitize_zip(
                 zip_out=zip_out,
                 options=options,
                 allow_exts=allow_exts,
+                nested_depth=0,
+                nested_budget=nested_budget,
             )
         if options.risky_policy == "block" and _has_risky_findings(warnings):
             raise BlockedByPolicy(warnings=warnings)
@@ -855,6 +894,28 @@ def _sanitize_ooxml(
         if tmp.exists():
             tmp.unlink(missing_ok=True)
     return warnings
+
+
+def _sanitize_zip_bytes(
+    payload: bytes,
+    *,
+    options: SanitizeOptions,
+    allow_exts: frozenset[str] | None,
+    nested_depth: int,
+    nested_budget: _NestedArchiveBudget,
+) -> tuple[bytes, list[WarningItem]]:
+    buf = io.BytesIO(payload)
+    out = io.BytesIO()
+    with zipfile.ZipFile(buf, "r") as zip_in, zipfile.ZipFile(out, "w") as zip_out:
+        warnings = _sanitize_zip_members(
+            zip_in,
+            zip_out=zip_out,
+            options=options,
+            allow_exts=allow_exts,
+            nested_depth=nested_depth,
+            nested_budget=nested_budget,
+        )
+    return out.getvalue(), warnings
 
 
 def _sanitize_ooxml_bytes(
@@ -1058,6 +1119,8 @@ def _sanitize_zip_members(
     zip_out: zipfile.ZipFile | None,
     options: SanitizeOptions,
     allow_exts: frozenset[str] | None,
+    nested_depth: int,
+    nested_budget: _NestedArchiveBudget,
 ) -> list[WarningItem]:
     warnings: set[WarningItem] = set()
     seen_names: set[str] = set()
@@ -1129,17 +1192,6 @@ def _sanitize_zip_members(
             continue
 
         suffix = Path(output_name).suffix.lower()
-        if allow_exts is not None and suffix not in allow_exts:
-            warnings.add(
-                WarningItem(
-                    code="allowlist_skipped",
-                    message=(
-                        f"zip entry '{info.filename}' disallowed by allow-ext allowlist "
-                        f"(extension {suffix or '<none>'}); skipped"
-                    ),
-                )
-            )
-            continue
         expanded_size = max(int(info.file_size), 0)
         if expanded_size > options.zip_max_member_uncompressed_bytes:
             warnings.add(
@@ -1167,95 +1219,6 @@ def _sanitize_zip_members(
             )
             continue
 
-        if suffix in ZIP_EXTS:
-            if options.nested_archive_policy == "copy":
-                try:
-                    # Read with a hard cap to avoid zip-bomb DoS even if headers lie about sizes.
-                    remaining_total = (
-                        options.zip_max_total_uncompressed_bytes - total_expanded_bytes
-                    )
-                    if remaining_total <= 0:
-                        warnings.add(
-                            WarningItem(
-                                code="zip_total_expanded_limit_exceeded",
-                                message=(
-                                    "zip expanded size limit exceeded "
-                                    f"({options.zip_max_total_uncompressed_bytes} bytes); "
-                                    f"nested archive '{info.filename}' skipped"
-                                ),
-                            )
-                        )
-                        continue
-                    data = _read_zip_member_bounded(
-                        zip_in,
-                        info,
-                        max_uncompressed_bytes=min(
-                            options.zip_max_member_uncompressed_bytes, remaining_total
-                        ),
-                    )
-                except _ZipMemberTooLarge:
-                    if remaining_total < options.zip_max_member_uncompressed_bytes:
-                        warnings.add(
-                            WarningItem(
-                                code="zip_total_expanded_limit_exceeded",
-                                message=(
-                                    "zip expanded size limit exceeded "
-                                    f"({options.zip_max_total_uncompressed_bytes} bytes); "
-                                    f"nested archive '{info.filename}' skipped"
-                                ),
-                            )
-                        )
-                    else:
-                        warnings.add(
-                            WarningItem(
-                                code="zip_entry_oversize",
-                                message=(
-                                    f"zip entry '{info.filename}' expanded size exceeds "
-                                    f"limit {options.zip_max_member_uncompressed_bytes}; skipped"
-                                ),
-                            )
-                        )
-                    continue
-                except Exception as exc:  # noqa: BLE001
-                    warnings.add(
-                        WarningItem(
-                            code="zip_nested_archive_read_failed",
-                            message=(
-                                f"zip entry '{info.filename}' failed to read nested archive: {exc}; skipped"
-                            ),
-                        )
-                    )
-                    continue
-                if total_expanded_bytes + len(data) > options.zip_max_total_uncompressed_bytes:
-                    warnings.add(
-                        WarningItem(
-                            code="zip_total_expanded_limit_exceeded",
-                            message=(
-                                "zip expanded size limit exceeded "
-                                f"({options.zip_max_total_uncompressed_bytes} bytes); "
-                                f"nested archive '{info.filename}' skipped"
-                            ),
-                        )
-                    )
-                    continue
-                total_expanded_bytes += len(data)
-                warnings.add(
-                    WarningItem(
-                        code="zip_nested_archive_copied",
-                        message=f"zip entry '{info.filename}' is nested archive; copied by policy",
-                    )
-                )
-                if zip_out is not None:
-                    _write_zip_member(zip_out, info, output_name, data)
-            else:
-                warnings.add(
-                    WarningItem(
-                        code="zip_nested_archive_skipped",
-                        message=f"zip entry '{info.filename}' is nested archive; skipped by policy",
-                    )
-                )
-            continue
-
         if total_expanded_bytes + expanded_size > options.zip_max_total_uncompressed_bytes:
             warnings.add(
                 WarningItem(
@@ -1269,52 +1232,236 @@ def _sanitize_zip_members(
             )
             continue
 
+        remaining_total = options.zip_max_total_uncompressed_bytes - total_expanded_bytes
+        if remaining_total <= 0:
+            warnings.add(
+                WarningItem(
+                    code="zip_total_expanded_limit_exceeded",
+                    message=(
+                        "zip expanded size limit exceeded "
+                        f"({options.zip_max_total_uncompressed_bytes} bytes); "
+                        f"entry '{info.filename}' and remaining data may be skipped"
+                    ),
+                )
+            )
+            continue
+
+        read_limit = min(options.zip_max_member_uncompressed_bytes, remaining_total)
         try:
-            remaining_total = options.zip_max_total_uncompressed_bytes - total_expanded_bytes
-            if remaining_total <= 0:
+            data = _read_zip_member_bounded(zip_in, info, max_uncompressed_bytes=read_limit)
+        except _ZipMemberTooLarge:
+            if remaining_total < options.zip_max_member_uncompressed_bytes:
                 warnings.add(
                     WarningItem(
                         code="zip_total_expanded_limit_exceeded",
                         message=(
                             "zip expanded size limit exceeded "
                             f"({options.zip_max_total_uncompressed_bytes} bytes); "
-                            f"entry '{info.filename}' and remaining data may be skipped"
+                            f"entry '{info.filename}' skipped"
                         ),
                     )
                 )
-                continue
+            else:
+                warnings.add(
+                    WarningItem(
+                        code="zip_entry_oversize",
+                        message=(
+                            f"zip entry '{info.filename}' expanded size exceeds "
+                            f"limit {options.zip_max_member_uncompressed_bytes}; skipped"
+                        ),
+                    )
+                )
+            continue
+        except Exception as exc:  # noqa: BLE001
+            warnings.add(
+                WarningItem(
+                    code="zip_entry_read_failed",
+                    message=f"zip entry '{info.filename}' failed to read: {exc}; skipped",
+                )
+            )
+            continue
 
-            # Read with a hard cap to avoid zip-bomb DoS even if headers lie about sizes.
-            read_limit = min(options.zip_max_member_uncompressed_bytes, remaining_total)
-            try:
-                data = _read_zip_member_bounded(zip_in, info, max_uncompressed_bytes=read_limit)
-            except _ZipMemberTooLarge:
-                if remaining_total < options.zip_max_member_uncompressed_bytes:
+        total_expanded_bytes += len(data)
+        detected = _sniff_magic_bytes(data[:16])
+
+        if allow_exts is not None and not _allowlist_allows(
+            suffix=suffix, detected=detected, allow_exts=allow_exts
+        ):
+            detail = f"extension {suffix or '<none>'}"
+            if detected is not None:
+                detail = f"{detail} detected {detected}"
+            warnings.add(
+                WarningItem(
+                    code="allowlist_skipped",
+                    message=(
+                        f"zip entry '{info.filename}' disallowed by allow-ext allowlist "
+                        f"({detail}); skipped"
+                    ),
+                )
+            )
+            continue
+
+        is_office = suffix in OFFICE_OOXML_EXTS
+        if (
+            not is_office
+            and detected == "zip"
+            and suffix not in ZIP_EXTS
+            and _zip_bytes_looks_like_ooxml(data)
+        ):
+            is_office = True
+            warnings.add(
+                WarningItem(
+                    code="content_type_detected_ooxml",
+                    message=(
+                        f"zip entry '{info.filename}': detected OOXML-like structure inside ZIP container; "
+                        f"treating as Office document (extension {suffix or '<none>'})"
+                    ),
+                )
+            )
+
+        is_zip = (suffix in ZIP_EXTS or detected == "zip") and not is_office
+        if suffix in ZIP_EXTS and detected in {"pdf", "jpeg", "png", "webp", "tiff"}:
+            warnings.add(
+                WarningItem(
+                    code="content_type_mismatch",
+                    message=(
+                        f"zip entry '{info.filename}': extension {suffix} does not match detected "
+                        f"content type {detected}; treating as unsupported"
+                    ),
+                )
+            )
+            is_zip = False
+        if detected == "zip" and suffix not in ZIP_EXTS and not is_office:
+            warnings.add(
+                WarningItem(
+                    code="content_type_detected",
+                    message=(
+                        f"zip entry '{info.filename}': detected ZIP by magic bytes; treating as nested ZIP "
+                        f"(extension {suffix or '<none>'})"
+                    ),
+                )
+            )
+
+        is_pdf = suffix in PDF_EXTS
+        if is_pdf and detected not in {None, "pdf"}:
+            warnings.add(
+                WarningItem(
+                    code="content_type_mismatch",
+                    message=(
+                        f"zip entry '{info.filename}': extension {suffix} does not match detected "
+                        f"content type {detected}; treating as unsupported"
+                    ),
+                )
+            )
+            is_pdf = False
+        if detected == "pdf" and not is_pdf:
+            warnings.add(
+                WarningItem(
+                    code="content_type_detected",
+                    message=(
+                        f"zip entry '{info.filename}': detected PDF by magic bytes; sanitizing as PDF "
+                        f"(extension {suffix or '<none>'})"
+                    ),
+                )
+            )
+            is_pdf = True
+
+        image_suffix = suffix
+        if suffix not in IMAGE_EXTS:
+            image_suffix = _image_suffix_for_detected(detected) or suffix
+            if image_suffix in IMAGE_EXTS:
+                warnings.add(
+                    WarningItem(
+                        code="content_type_detected",
+                        message=(
+                            f"zip entry '{info.filename}': detected image by magic bytes; sanitizing as image "
+                            f"(extension {suffix or '<none>'})"
+                        ),
+                    )
+                )
+        is_image = image_suffix in IMAGE_EXTS
+
+        try:
+            if is_zip:
+                if options.nested_archive_policy == "copy":
+                    payload = data
                     warnings.add(
                         WarningItem(
-                            code="zip_total_expanded_limit_exceeded",
-                            message=(
-                                "zip expanded size limit exceeded "
-                                f"({options.zip_max_total_uncompressed_bytes} bytes); "
-                                f"entry '{info.filename}' skipped"
-                            ),
+                            code="zip_nested_archive_copied",
+                            message=f"zip entry '{info.filename}' is nested archive; copied by policy",
                         )
                     )
+                elif options.nested_archive_policy == "skip":
+                    warnings.add(
+                        WarningItem(
+                            code="zip_nested_archive_skipped",
+                            message=f"zip entry '{info.filename}' is nested archive; skipped by policy",
+                        )
+                    )
+                    continue
                 else:
+                    next_depth = nested_depth + 1
+                    if next_depth > options.nested_archive_max_depth:
+                        warnings.add(
+                            WarningItem(
+                                code="zip_nested_archive_depth_exceeded",
+                                message=(
+                                    f"zip entry '{info.filename}' is nested archive at depth {next_depth}; "
+                                    f"max depth {options.nested_archive_max_depth} exceeded; skipped"
+                                ),
+                            )
+                        )
+                        continue
+                    if (
+                        nested_budget.used_uncompressed_bytes + len(data)
+                        > options.nested_archive_max_total_uncompressed_bytes
+                    ):
+                        warnings.add(
+                            WarningItem(
+                                code="zip_nested_archive_budget_exceeded",
+                                message=(
+                                    f"zip entry '{info.filename}' nested archive budget exceeded "
+                                    f"({options.nested_archive_max_total_uncompressed_bytes} bytes); skipped"
+                                ),
+                            )
+                        )
+                        continue
+                    nested_budget.used_uncompressed_bytes += len(data)
+                    try:
+                        payload, nested_warnings = _sanitize_zip_bytes(
+                            data,
+                            options=options,
+                            allow_exts=allow_exts,
+                            nested_depth=next_depth,
+                            nested_budget=nested_budget,
+                        )
+                    except Exception as exc:  # noqa: BLE001
+                        warnings.add(
+                            WarningItem(
+                                code="zip_nested_archive_sanitize_failed",
+                                message=(
+                                    f"zip entry '{info.filename}' nested archive sanitize failed: {exc}; skipped"
+                                ),
+                            )
+                        )
+                        continue
                     warnings.add(
                         WarningItem(
-                            code="zip_entry_oversize",
+                            code="zip_nested_archive_sanitized",
                             message=(
-                                f"zip entry '{info.filename}' expanded size exceeds "
-                                f"limit {options.zip_max_member_uncompressed_bytes}; skipped"
+                                f"zip entry '{info.filename}' nested archive sanitized recursively "
+                                f"(depth {next_depth})"
                             ),
                         )
                     )
-                continue
-
-            total_expanded_bytes += len(data)
-
-            if suffix in OFFICE_OOXML_EXTS:
+                    for w in nested_warnings:
+                        warnings.add(
+                            WarningItem(
+                                code=w.code,
+                                message=f"zip entry '{info.filename}': {w.message}",
+                            )
+                        )
+            elif is_office:
                 if suffix in OFFICE_MACRO_ENABLED_EXTS:
                     warnings.add(
                         WarningItem(
@@ -1365,9 +1512,9 @@ def _sanitize_zip_members(
                                 message=f"zip entry '{info.filename}': {w.message}",
                             )
                         )
-            elif suffix in IMAGE_EXTS:
-                payload = _sanitize_image_bytes(data, suffix=suffix)
-            elif suffix in PDF_EXTS:
+            elif is_image:
+                payload = _sanitize_image_bytes(data, suffix=image_suffix)
+            elif is_pdf:
                 payload, pdf_warnings = _sanitize_pdf_bytes(data)
                 for warning in pdf_warnings:
                     warnings.add(
@@ -1541,6 +1688,17 @@ def _image_format_for_suffix(suffix: str) -> str:
         ".tif": "TIFF",
         ".tiff": "TIFF",
     }[suffix]
+
+
+def _image_suffix_for_detected(detected: str | None) -> str | None:
+    if detected is None:
+        return None
+    return {
+        "jpeg": ".jpg",
+        "png": ".png",
+        "webp": ".webp",
+        "tiff": ".tiff",
+    }.get(detected)
 
 
 def _scan_pdf_risks(reader: PdfReader) -> list[WarningItem]:
@@ -1794,10 +1952,10 @@ def _normalize_allow_exts(raw: list[str]) -> frozenset[str] | None:
 
 def _allowlist_allows(*, suffix: str, detected: str | None, allow_exts: frozenset[str]) -> bool:
     # Primary behavior: extension allowlist.
-    if suffix:
-        return suffix in allow_exts
+    if suffix and suffix in allow_exts:
+        return True
 
-    # Secondary behavior: allow extensionless files by detected content type.
+    # Secondary behavior: allow files by detected content type even if extension is missing/mismatched.
     if detected == "pdf":
         return ".pdf" in allow_exts
     if detected == "zip":
@@ -1808,4 +1966,6 @@ def _allowlist_allows(*, suffix: str, detected: str | None, allow_exts: frozense
         return ".png" in allow_exts
     if detected == "webp":
         return ".webp" in allow_exts
+    if detected == "tiff":
+        return ".tif" in allow_exts or ".tiff" in allow_exts
     return False

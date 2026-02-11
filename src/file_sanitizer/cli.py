@@ -8,6 +8,8 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 from .sanitizer import (
+    DEFAULT_NESTED_ARCHIVE_MAX_DEPTH,
+    DEFAULT_NESTED_ARCHIVE_MAX_TOTAL_UNCOMPRESSED_BYTES,
     DEFAULT_ZIP_MAX_COMPRESSION_RATIO,
     DEFAULT_ZIP_MAX_MEMBER_UNCOMPRESSED_BYTES,
     DEFAULT_ZIP_MAX_MEMBERS,
@@ -146,6 +148,26 @@ def main(argv: list[str] | None = None) -> int:
         help="How nested ZIP members are handled (default: skip)",
     )
     p_run.add_argument(
+        "--nested-archive-max-depth",
+        type=int,
+        default=DEFAULT_NESTED_ARCHIVE_MAX_DEPTH,
+        metavar="N",
+        help=(
+            "Maximum recursive depth when --nested-archive-policy=sanitize "
+            f"(default: {DEFAULT_NESTED_ARCHIVE_MAX_DEPTH})"
+        ),
+    )
+    p_run.add_argument(
+        "--nested-archive-max-total-bytes",
+        type=int,
+        default=DEFAULT_NESTED_ARCHIVE_MAX_TOTAL_UNCOMPRESSED_BYTES,
+        metavar="BYTES",
+        help=(
+            "Maximum total uncompressed bytes processed across recursively sanitized nested archives "
+            f"(default: {DEFAULT_NESTED_ARCHIVE_MAX_TOTAL_UNCOMPRESSED_BYTES})"
+        ),
+    )
+    p_run.add_argument(
         "--risky-policy",
         choices=sorted(RISKY_POLICIES),
         default="warn",
@@ -195,6 +217,8 @@ def _run(args: argparse.Namespace) -> int:
             zip_max_total_uncompressed_bytes=int(args.zip_max_total_bytes),
             zip_max_compression_ratio=float(args.zip_max_compression_ratio),
             nested_archive_policy=str(args.nested_archive_policy),
+            nested_archive_max_depth=int(args.nested_archive_max_depth),
+            nested_archive_max_total_uncompressed_bytes=int(args.nested_archive_max_total_bytes),
             risky_policy=str(args.risky_policy),
         ),
         on_item=_on_item,
@@ -253,6 +277,8 @@ def _run(args: argparse.Namespace) -> int:
                 "zip_max_total_bytes": int(args.zip_max_total_bytes),
                 "zip_max_compression_ratio": float(args.zip_max_compression_ratio),
                 "nested_archive_policy": str(args.nested_archive_policy),
+                "nested_archive_max_depth": int(args.nested_archive_max_depth),
+                "nested_archive_max_total_bytes": int(args.nested_archive_max_total_bytes),
                 "risky_policy": str(args.risky_policy),
             },
         }

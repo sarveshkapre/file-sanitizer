@@ -93,7 +93,7 @@ Common categories:
   - `content_type_detected_ooxml`: ZIP container looks like an Office OOXML document.
   - `content_type_mismatch`: extension implies a supported type but magic bytes do not match.
 - `allowlist_*`: allowlist mode findings.
-  - `allowlist_skipped`: file (or ZIP member) was skipped because its extension was not in `--allow-ext`.
+  - `allowlist_skipped`: file (or ZIP member) was skipped because neither extension nor detected content type matched `--allow-ext`.
 - `excluded_*`: exclusion behavior.
   - `excluded_by_pattern`
 - `unsupported_*`: unsupported file handling.
@@ -101,6 +101,7 @@ Common categories:
 - `pdf_risk_*` and `pdf_scan_failed`: PDF active-content indicators (not removed).
 - `office_*`: Office macro signals (macros are not removed).
 - `zip_*`: ZIP hardening warnings and guardrail findings.
+  - Includes nested-archive policy outcomes (`zip_nested_archive_skipped`, `zip_nested_archive_copied`, `zip_nested_archive_sanitized`) and recursive-budget/depth findings (`zip_nested_archive_depth_exceeded`, `zip_nested_archive_budget_exceeded`).
 - `symlink_skipped`, `output_exists`, `traversal_limit_reached`
 
 ## Exit Codes (CLI)

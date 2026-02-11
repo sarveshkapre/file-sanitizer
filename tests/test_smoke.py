@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import io
 import json
 import os
 import subprocess
@@ -195,3 +196,45 @@ def test_cli_risky_policy_block_blocks_outputs(tmp_path: Path) -> None:
     assert proc.returncode == 2
     item = json.loads(report.read_text(encoding="utf-8").strip().splitlines()[0])
     assert item["action"] == "blocked"
+
+
+def test_cli_nested_archive_sanitize_policy_flags(tmp_path: Path) -> None:
+    input_zip = tmp_path / "bundle.zip"
+
+    inner = io.BytesIO()
+    with zipfile.ZipFile(inner, "w") as inner_zip:
+        inner_zip.writestr("nested.txt", "ok")
+
+    with zipfile.ZipFile(input_zip, "w") as zf:
+        zf.writestr("nested/inner.zip", inner.getvalue())
+
+    out_dir = tmp_path / "out"
+    report = tmp_path / "report.jsonl"
+
+    proc = subprocess.run(
+        [
+            sys.executable,
+            "-m",
+            "file_sanitizer",
+            "sanitize",
+            "--input",
+            str(input_zip),
+            "--out",
+            str(out_dir),
+            "--report",
+            str(report),
+            "--nested-archive-policy",
+            "sanitize",
+            "--nested-archive-max-depth",
+            "2",
+            "--nested-archive-max-total-bytes",
+            "4096",
+        ],
+        check=False,
+        capture_output=True,
+        text=True,
+    )
+
+    assert proc.returncode == 0
+    with zipfile.ZipFile(out_dir / "bundle.zip", "r") as zf:
+        assert "nested/inner.zip" in set(zf.namelist())

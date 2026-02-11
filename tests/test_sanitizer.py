@@ -1050,3 +1050,195 @@ def test_invalid_zip_options_raise_value_error(tmp_path: Path) -> None:
             report,
             options=SanitizeOptions(zip_max_members=0),
         )
+
+    with pytest.raises(ValueError, match="nested_archive_max_depth must be >= 1"):
+        sanitize_path(
+            zip_path,
+            out_dir,
+            report,
+            options=SanitizeOptions(nested_archive_policy="sanitize", nested_archive_max_depth=0),
+        )
+
+    with pytest.raises(
+        ValueError, match="nested_archive_max_total_uncompressed_bytes must be >= 1"
+    ):
+        sanitize_path(
+            zip_path,
+            out_dir,
+            report,
+            options=SanitizeOptions(
+                nested_archive_policy="sanitize",
+                nested_archive_max_total_uncompressed_bytes=0,
+            ),
+        )
+
+
+def _pdf_payload_bytes() -> bytes:
+    writer = PdfWriter()
+    writer.add_blank_page(width=72, height=72)
+    out = io.BytesIO()
+    writer.write(out)
+    return out.getvalue()
+
+
+def test_zip_member_magic_sniffing_sanitizes_disguised_pdf(tmp_path: Path) -> None:
+    outer = tmp_path / "bundle.zip"
+    with zipfile.ZipFile(outer, "w") as zip_out:
+        zip_out.writestr("docs/secret.bin", _pdf_payload_bytes())
+
+    out_dir = tmp_path / "out"
+    report = tmp_path / "report.jsonl"
+    rc = sanitize_path(outer, out_dir, report)
+    assert rc == 0
+
+    with zipfile.ZipFile(out_dir / "bundle.zip", "r") as zip_in:
+        pdf_bytes = zip_in.read("docs/secret.bin")
+    reader = PdfReader(io.BytesIO(pdf_bytes))
+    assert len(reader.pages) == 1
+
+    warnings = json.loads(report.read_text(encoding="utf-8").strip())["warnings"]
+    assert any(
+        "zip entry 'docs/secret.bin': detected PDF by magic bytes" in message
+        for message in _warning_messages(warnings)
+    )
+
+
+def test_zip_member_magic_sniffing_sanitizes_disguised_ooxml(tmp_path: Path) -> None:
+    docx = tmp_path / "meta.docx"
+    _make_ooxml_with_docprops(docx, creator="Eve", with_thumbnail=True)
+
+    outer = tmp_path / "bundle.zip"
+    with zipfile.ZipFile(outer, "w") as zip_out:
+        zip_out.writestr("docs/meta.bin", docx.read_bytes())
+
+    out_dir = tmp_path / "out"
+    report = tmp_path / "report.jsonl"
+    rc = sanitize_path(outer, out_dir, report)
+    assert rc == 0
+
+    with zipfile.ZipFile(out_dir / "bundle.zip", "r") as zip_in:
+        payload = zip_in.read("docs/meta.bin")
+    with zipfile.ZipFile(io.BytesIO(payload), "r") as inner:
+        names = set(inner.namelist())
+        assert "docProps/thumbnail.jpeg" not in names
+        core = inner.read("docProps/core.xml").decode("utf-8", errors="replace")
+        assert "Eve" not in core
+
+    warnings = json.loads(report.read_text(encoding="utf-8").strip())["warnings"]
+    assert any(
+        "zip entry 'docs/meta.bin': detected OOXML-like structure" in message
+        for message in _warning_messages(warnings)
+    )
+
+
+def test_zip_member_allowlist_uses_detected_type(tmp_path: Path) -> None:
+    outer = tmp_path / "bundle.zip"
+    with zipfile.ZipFile(outer, "w") as zip_out:
+        zip_out.writestr("docs/secret.bin", _pdf_payload_bytes())
+
+    out_dir = tmp_path / "out"
+    report = tmp_path / "report.jsonl"
+    rc = sanitize_path(
+        outer,
+        out_dir,
+        report,
+        options=SanitizeOptions(allow_exts=[".pdf"], copy_unsupported=False),
+    )
+    assert rc == 0
+
+    with zipfile.ZipFile(out_dir / "bundle.zip", "r") as zip_in:
+        assert "docs/secret.bin" in set(zip_in.namelist())
+
+
+def test_zip_nested_archive_sanitize_policy_recursively_sanitizes(tmp_path: Path) -> None:
+    inner_payload = io.BytesIO()
+    with zipfile.ZipFile(inner_payload, "w") as nested_zip:
+        nested_zip.writestr("docs/secret.bin", _pdf_payload_bytes())
+
+    outer = tmp_path / "outer.zip"
+    with zipfile.ZipFile(outer, "w") as zip_out:
+        zip_out.writestr("nested/inner.zip", inner_payload.getvalue())
+        zip_out.writestr("docs/note.txt", "hello")
+
+    out_dir = tmp_path / "out"
+    report = tmp_path / "report.jsonl"
+    rc = sanitize_path(
+        outer,
+        out_dir,
+        report,
+        options=SanitizeOptions(nested_archive_policy="sanitize", nested_archive_max_depth=3),
+    )
+    assert rc == 0
+
+    with zipfile.ZipFile(out_dir / "outer.zip", "r") as zip_in:
+        nested_bytes = zip_in.read("nested/inner.zip")
+    with zipfile.ZipFile(io.BytesIO(nested_bytes), "r") as nested_zip:
+        assert "docs/secret.bin" in set(nested_zip.namelist())
+
+    warnings = json.loads(report.read_text(encoding="utf-8").strip())["warnings"]
+    assert any(
+        "nested archive sanitized recursively" in message for message in _warning_messages(warnings)
+    )
+
+
+def test_zip_nested_archive_sanitize_policy_depth_budget(tmp_path: Path) -> None:
+    deep_payload = io.BytesIO()
+    with zipfile.ZipFile(deep_payload, "w") as deep_zip:
+        deep_zip.writestr("deep.txt", "ok")
+
+    inner_payload = io.BytesIO()
+    with zipfile.ZipFile(inner_payload, "w") as nested_zip:
+        nested_zip.writestr("deep/deeper.zip", deep_payload.getvalue())
+
+    outer = tmp_path / "outer.zip"
+    with zipfile.ZipFile(outer, "w") as zip_out:
+        zip_out.writestr("nested/inner.zip", inner_payload.getvalue())
+
+    out_dir = tmp_path / "out"
+    report = tmp_path / "report.jsonl"
+    rc = sanitize_path(
+        outer,
+        out_dir,
+        report,
+        options=SanitizeOptions(nested_archive_policy="sanitize", nested_archive_max_depth=1),
+    )
+    assert rc == 0
+
+    with zipfile.ZipFile(out_dir / "outer.zip", "r") as zip_in:
+        nested_bytes = zip_in.read("nested/inner.zip")
+    with zipfile.ZipFile(io.BytesIO(nested_bytes), "r") as nested_zip:
+        assert "deep/deeper.zip" not in set(nested_zip.namelist())
+
+    warnings = json.loads(report.read_text(encoding="utf-8").strip())["warnings"]
+    assert any("max depth 1 exceeded" in message for message in _warning_messages(warnings))
+
+
+def test_zip_nested_archive_sanitize_policy_total_budget(tmp_path: Path) -> None:
+    inner_payload = io.BytesIO()
+    with zipfile.ZipFile(inner_payload, "w") as nested_zip:
+        nested_zip.writestr("nested.txt", "hello")
+
+    outer = tmp_path / "outer.zip"
+    with zipfile.ZipFile(outer, "w") as zip_out:
+        zip_out.writestr("nested/inner.zip", inner_payload.getvalue())
+
+    out_dir = tmp_path / "out"
+    report = tmp_path / "report.jsonl"
+    rc = sanitize_path(
+        outer,
+        out_dir,
+        report,
+        options=SanitizeOptions(
+            nested_archive_policy="sanitize",
+            nested_archive_max_total_uncompressed_bytes=1,
+        ),
+    )
+    assert rc == 0
+
+    with zipfile.ZipFile(out_dir / "outer.zip", "r") as zip_in:
+        assert "nested/inner.zip" not in set(zip_in.namelist())
+
+    warnings = json.loads(report.read_text(encoding="utf-8").strip())["warnings"]
+    assert any(
+        "nested archive budget exceeded" in message for message in _warning_messages(warnings)
+    )

@@ -26,6 +26,8 @@
 - Add ZIP bomb guardrails with configurable limits (`--zip-max-members`, `--zip-max-member-bytes`, `--zip-max-total-bytes`, `--zip-max-compression-ratio`).
 - Enforce ZIP member uncompressed-byte limits during streaming reads (resilient to malformed ZIP headers).
 - Add nested ZIP handling policy (`--nested-archive-policy` with secure default `skip`).
+- Add recursive nested ZIP sanitization mode (`--nested-archive-policy sanitize`) with depth and aggregate-byte guardrails (`--nested-archive-max-depth`, `--nested-archive-max-total-bytes`).
+- Add ZIP-member magic-byte sniffing parity so disguised PDF/image/OOXML payloads inside archives are sanitized consistently (and allowlist checks can use detected type).
 - Add committed regression fixtures under `tests/fixtures/` for EXIF image, risky PDF, and mixed ZIP.
 - Add directory traversal guardrails for large inputs (`--max-files`, `--max-bytes`) and streaming deterministic directory walking.
 - Add magic-bytes content-type sniffing to reduce extension spoofing (with OOXML heuristics to avoid treating Office docs as raw ZIPs).

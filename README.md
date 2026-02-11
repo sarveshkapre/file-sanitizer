@@ -8,6 +8,7 @@ Local file sanitizer that removes common metadata from images and PDFs.
 - Remove PDF metadata.
 - Strip common Office OOXML metadata (`docProps/*`) and drop `docProps/thumbnail.*` for `.docx/.xlsx/.pptx` (and macro-enabled variants).
 - Sanitize ZIP archives by sanitizing supported members and filtering unsafe members.
+- Optional recursive nested ZIP sanitization with explicit depth/byte budgets.
 - JSONL report output.
 - Preserve directory structure by default (avoids filename collisions).
 - Deterministic traversal/report ordering for reproducible runs.
@@ -75,13 +76,21 @@ file-sanitizer sanitize --input ./drop/batch.zip --out ./sanitized \
 
 # Keep nested ZIP members instead of skipping them (default is skip)
 file-sanitizer sanitize --input ./drop/batch.zip --out ./sanitized --nested-archive-policy copy
+
+# Recursively sanitize nested ZIP members with safety budgets
+file-sanitizer sanitize --input ./drop/batch.zip --out ./sanitized \
+  --nested-archive-policy sanitize \
+  --nested-archive-max-depth 3 \
+  --nested-archive-max-total-bytes 134217728
 ```
 
 Notes:
 - ZIP handling skips unsafe members (for example path traversal paths or symlinks) and reports warnings.
 - ZIP guardrails skip entries that exceed configured limits (entry count, per-entry size, total expanded bytes, compression ratio).
-- Nested ZIP members are skipped by default (use `--nested-archive-policy copy` to preserve them as-is).
+- Nested ZIP members are skipped by default (use `--nested-archive-policy copy` to preserve them as-is, or `sanitize` for recursive sanitization).
+- Recursive nested ZIP sanitization is guarded by `--nested-archive-max-depth` and `--nested-archive-max-total-bytes`.
 - When `--allow-ext` is set, non-allowlisted files are skipped; for `.zip` inputs, the allowlist is applied to ZIP members.
+- ZIP member allowlisting uses both extension and magic-byte detection (for example, a PDF payload in `*.bin` can still be sanitized when `.pdf` is allowlisted).
 - Unsupported ZIP members are copied as-is by default (use `--no-copy-unsupported` to skip them).
 - Report warnings are structured objects with `code` and `message` for machine-actionable ingestion.
 - Office macro-enabled OOXML files (`.docm/.xlsm/.pptm` and templates) and OOXML macro indicators (ex: `vbaProject.bin`) are surfaced as warnings (macros are not removed).
