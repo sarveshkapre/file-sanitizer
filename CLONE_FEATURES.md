@@ -7,12 +7,20 @@
 - Gaps found during codebase exploration
 
 ## Candidate Features To Do
-- [ ] P1 (impact: med, effort: med, strategic fit: high, diff: low, risk: low, confidence: med): Add benchmark/regression coverage for large directory and ZIP inputs (track runtime and memory) in a CI-friendly way.
-- [ ] P2 (impact: med, effort: med, strategic fit: med, diff: med, risk: med, confidence: med): Add a run-level metadata record (input type, options snapshot, started_at/ended_at) as an optional first JSONL line (distinct from the summary record).
-- [ ] P2 (impact: med, effort: high, strategic fit: high, diff: med, risk: med, confidence: med): Add optional recursive nested-archive sanitization with a depth budget and expanded-bytes budget.
-- [ ] P2 (impact: med, effort: med, strategic fit: med, diff: low, risk: low, confidence: low): Expand image support beyond JPEG/PNG/WebP/TIFF (HEIC) behind an optional extra dependency (do not bloat base install).
+- [ ] P1 (impact: med, effort: med, strategic fit: high, diff: low, risk: low, confidence: med): Add benchmark regression checks for large directory and ZIP inputs with machine-readable output and optional threshold enforcement in CI.
+- [ ] P2 (impact: med, effort: med, strategic fit: med, diff: med, risk: med, confidence: med): Add a run-level metadata record as an optional first JSONL line (distinct from summary).
+- [ ] P2 (impact: med, effort: high, strategic fit: med, diff: med, risk: med, confidence: low): Add optional HEIC sanitization behind an extra dependency without inflating base install.
+- [ ] P2 (impact: med, effort: med, strategic fit: med, diff: low, risk: low, confidence: med): Add warning-code stability tests to prevent accidental warning taxonomy drift.
+- [ ] P2 (impact: med, effort: med, strategic fit: med, diff: low, risk: low, confidence: med): Add a JSON summary output mode for single-run tooling integrations (`--summary-json` to stderr/stdout).
+- [ ] P2 (impact: med, effort: low, strategic fit: med, diff: low, risk: low, confidence: high): Add `--report-pretty` for human-debugging JSON output while keeping JSONL as default contract.
+- [ ] P3 (impact: med, effort: med, strategic fit: med, diff: low, risk: low, confidence: med): Add optional fail mode for unsupported files (`--unsupported-policy block`) to tighten strict pipelines.
+- [ ] P3 (impact: med, effort: med, strategic fit: med, diff: low, risk: low, confidence: med): Add deterministic ZIP output metadata controls (timestamps/perms) for byte-for-byte reproducible archives.
+- [ ] P3 (impact: low, effort: low, strategic fit: med, diff: low, risk: low, confidence: high): Add developer docs for large-input tuning playbooks (zip guardrails, traversal limits, risky policy combinations).
+- [ ] P3 (impact: low, effort: low, strategic fit: med, diff: low, risk: low, confidence: high): Add additional fixture corpus for malformed ZIP headers and damaged OOXML containers.
 
 ## Implemented
+- [x] 2026-02-11: Add recursive nested ZIP sanitization mode (`--nested-archive-policy sanitize`) with depth and aggregate-byte guardrails (`--nested-archive-max-depth`, `--nested-archive-max-total-bytes`), plus ZIP-member magic-byte sniffing parity for disguised PDF/image/OOXML payloads and allowlist-by-detected-type behavior.
+  Evidence: `src/file_sanitizer/sanitizer.py`, `src/file_sanitizer/cli.py`, `tests/test_sanitizer.py`, `tests/test_smoke.py`, `README.md`, `docs/report.md`, `make check`, CLI smoke commands (`RC1=0`, `RC2=0`) validating nested recursive output + allowlist parity.
 - [x] 2026-02-10: Fix stdout report mode (`--report -`) to not skip a real input file named `-` (report-file skipping now only applies when writing to a report path on disk).
   Evidence: `src/file_sanitizer/sanitizer.py`, `tests/test_sanitizer.py`, `make check`.
 - [x] 2026-02-10: Add Office OOXML metadata stripping for `.docx/.xlsx/.pptx` (and macro-enabled variants) by sanitizing `docProps/*.xml` and dropping `docProps/thumbnail.*`, including for embedded OOXML files inside ZIP inputs.
@@ -101,6 +109,9 @@
 - Market scan notes (2026-02-09): pdfcpu advertises an explicit `sanitize` operation for PDFs; baseline expectation: PDF toolchains often have a dedicated sanitize step beyond metadata removal. https://pdfcpu.io/
 - Market scan notes (2026-02-09): ocrmypdf documents `--quiet` usage; baseline expectation: automation CLIs need a way to suppress non-essential stderr output when piping. https://ocrmypdf.readthedocs.io/en/latest/cookbook.html
 - Market scan notes (2026-02-10): OOXML packages store core document metadata (ex: creator, lastModifiedBy) in `docProps/core.xml`; metadata removal should explicitly target these docProps parts. https://c-rex.net/samples/ooxml/e1/Part1/OOXML_P1_Fundamentals_Core_topic_ID0ED3CO.html
+- Market scan notes (2026-02-11): ExifTool documents bulk metadata removal via `-all=` and automation-first CLI workflows; users expect broad format coverage plus deterministic scripting primitives. https://exiftool.org/exiftool_pod.html
+- Market scan notes (2026-02-11): qpdf documents `--deterministic-id`, reinforcing reproducibility as a baseline expectation for file-processing CI pipelines. https://qpdf.readthedocs.io/en/stable/cli.html#option-deterministic-id
+- Market scan notes (2026-02-11): Dangerzone emphasizes conversion of untrusted docs into safer PDFs via isolation and rendering; this validates keeping “risky findings” visible even when metadata is stripped. https://github.com/freedomofpress/dangerzone
 
 ## Notes
 - This file is maintained by the autonomous clone loop.

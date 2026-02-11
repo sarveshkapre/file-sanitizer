@@ -1,5 +1,21 @@
 # PROJECT_MEMORY
 
+## Recent Decisions
+
+- 2026-02-11 | Add recursive nested ZIP sanitization mode (`--nested-archive-policy sanitize`) with explicit depth (`--nested-archive-max-depth`) and aggregate-byte (`--nested-archive-max-total-bytes`) guardrails. | Why: nested archives are common in real drops and skip/copy-only handling leaves sanitizer coverage gaps. | Evidence: `src/file_sanitizer/sanitizer.py`, `src/file_sanitizer/cli.py`, `tests/test_sanitizer.py`, `tests/test_smoke.py`, `README.md`, `make check`, smoke run with `RC1=0` and nested output entry `docs/secret.bin`. | Commit: `dd058cb5036408f9c72615ef7385991898cfaa7b` | Confidence: High | Trust label: trusted (verified-local)
+- 2026-02-11 | Add ZIP-member magic-byte sniffing parity (detected PDF/image/OOXML in `.zip` members) and allowlist-by-detected-type behavior. | Why: extension-only routing missed disguised supported payloads and could under-sanitize untrusted archives. | Evidence: `src/file_sanitizer/sanitizer.py`, `tests/test_sanitizer.py` (`test_zip_member_magic_sniffing_*`, `test_zip_member_allowlist_uses_detected_type`), smoke run with `RC2=0` and output entry `docs/secret.bin`. | Commit: `dd058cb5036408f9c72615ef7385991898cfaa7b` | Confidence: High | Trust label: trusted (verified-local)
+
+## Mistakes And Fixes
+
+- 2026-02-11 | Root cause: initial allowlist parity implementation still rejected disguised ZIP members because `_allowlist_allows` short-circuited on non-allowlisted suffix before considering detected content type. | Fix: changed allowlist evaluation to allow detected-type matches even when suffix is present/mismatched; added regression test `test_zip_member_allowlist_uses_detected_type`. | Prevention rule: for every “detected content type” feature, add a mismatch test where extension and detected type disagree.
+
+## Verification Evidence
+
+- `make check` | pass (`58 passed`, mypy/ruff/build clean)
+- `.venv/bin/python -m file_sanitizer sanitize --input "$tmpdir/outer.zip" --out "$tmpdir/out1" --report "$tmpdir/report1.jsonl" --nested-archive-policy sanitize --nested-archive-max-depth 3 --nested-archive-max-total-bytes 1048576 --quiet` | pass (`RC1=0`, nested output retained `docs/secret.bin`, warnings include `zip_nested_archive_sanitized`)
+- `.venv/bin/python -m file_sanitizer sanitize --input "$tmpdir/allow.zip" --out "$tmpdir/out2" --report "$tmpdir/report2.jsonl" --allow-ext .pdf --no-copy-unsupported --quiet` | pass (`RC2=0`, allowlist accepted disguised PDF member by detected type)
+- `gh run list --limit 10 --json databaseId,headSha,status,conclusion,workflowName,createdAt` | pass (new run for `dd058cb5036408f9c72615ef7385991898cfaa7b` observed in progress; no failures at capture time)
+
 ## Decision Log
 
 ### 2026-02-10 - Stdout report mode should not skip a real input file named `-`
