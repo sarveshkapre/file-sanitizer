@@ -14,7 +14,7 @@
 - `make check` | pass (`58 passed`, mypy/ruff/build clean)
 - `.venv/bin/python -m file_sanitizer sanitize --input "$tmpdir/outer.zip" --out "$tmpdir/out1" --report "$tmpdir/report1.jsonl" --nested-archive-policy sanitize --nested-archive-max-depth 3 --nested-archive-max-total-bytes 1048576 --quiet` | pass (`RC1=0`, nested output retained `docs/secret.bin`, warnings include `zip_nested_archive_sanitized`)
 - `.venv/bin/python -m file_sanitizer sanitize --input "$tmpdir/allow.zip" --out "$tmpdir/out2" --report "$tmpdir/report2.jsonl" --allow-ext .pdf --no-copy-unsupported --quiet` | pass (`RC2=0`, allowlist accepted disguised PDF member by detected type)
-- `gh run list --limit 10 --json databaseId,headSha,status,conclusion,workflowName,createdAt` | pass (new run for `dd058cb5036408f9c72615ef7385991898cfaa7b` observed in progress; no failures at capture time)
+- `gh run list --limit 10 --json databaseId,headSha,status,conclusion,workflowName,createdAt` | pass (`dd058cb5036408f9c72615ef7385991898cfaa7b` and `b51801ea7507d8972819c9ff6fc814302a42b5bb` completed with `conclusion=success`)
 
 ## Decision Log
 
